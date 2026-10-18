@@ -103,3 +103,42 @@ Findings:
 5. Practical conclusion for hard semantic tasks: slot a task-trained
    specialist into `nlu=` or accept hosted inference for the hard slice;
    distillation shines where the encoder's representations suffice.
+
+## Cascade + target_accuracy on hate detection (v0.11.0)
+
+Full stack on the same 400 test tweets: distilled head + `target_accuracy=0.8`
++ `escalate_to="anthropic/claude-haiku-4-5"`.
+
+| Tier | Accuracy | Coverage | Cost |
+|---|---|---|---|
+| tier-1 local (distilled + corrected) | 63.5% | 255/400 | $0 |
+| tier-2 haiku (escalated slice) | 64.1% | 145/400 | per-record |
+| **Combined** | **63.7%** | 400/400 | partial |
+
+Policy fit: cutoff 0.911, tier-1 est. 81% acc / 64% coverage on the fit fold.
+
+**Two honest findings - both arguably more useful than the headline number:**
+
+1. **A cascade only pays when tier-2 is substantially stronger than tier-1.**
+   Here haiku (a small LLM) scored 64.1% on implicit hate - essentially tied
+   with the distilled local model (63.5%). Escalating 145 tweets bought ~0
+   accuracy at real cost. The cascade is the right tool when the escalation
+   arbiter genuinely dominates the local one (e.g. Opus, or a task specialist);
+   it is dead weight when both tiers are weak on the same hard cases.
+
+2. **Accuracy-target correction trades away minority-class recall on
+   imbalanced data - the wrong objective for moderation.** The fitted
+   class-bias ([+2.58, -2.58]) maximized overall accuracy by shifting toward
+   the majority class (not_hate, 59%), which collapsed hate recall to 22%.
+   That is accuracy-optimization doing exactly what it was asked - and "accuracy"
+   is the wrong target when catching the minority class is the point. For
+   moderation, optimize recall/F-beta on the positive class, not accuracy.
+   (A recall-targeted policy is a clean future lever; target_accuracy is
+   honest only when accuracy is actually what you want.)
+
+**Net**: v0.11.0's machinery is correct and cheap (corrections fitted at
+compile, cascade pays only on the escalated slice), and it shines when tier-2
+dominates and classes are balanced. On adversarial, imbalanced hate detection
+it does not rescue the task - consistent with every prior result: the
+bottleneck is a decision model that can read implicit hate, and that is a
+model-slot problem (task-trained specialist), not a policy problem.

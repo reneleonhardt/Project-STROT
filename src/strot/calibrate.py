@@ -39,7 +39,7 @@ metadata for exactly that reason.
 from __future__ import annotations
 
 import math
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 #: Search grid for the temperature scalar (log-spaced, inclusive bounds).
 _T_MIN, _T_MAX, _T_STEPS = 0.25, 4.0, 60
@@ -196,3 +196,78 @@ def calibration_report(
             round(correct_singleton / singleton, 4) if singleton else None
         ),
     }
+
+
+def fit_class_bias(
+    distributions: Sequence[Sequence[float]],
+    true_indices: Sequence[int],
+    temperature: float,
+    epochs: int = 200,
+    learning_rate: float = 0.5,
+) -> List[float]:
+    """Per-class log-bias correction fitted by NLL (vector scaling, bias part).
+
+    Corrects systematic class skew (e.g. chronic over-flagging of one class)
+    that a single temperature cannot: calibrated probabilities become
+    ``p_i^(1/T) * exp(b_i)`` renormalized. Pure Python, fitted once at
+    compile time on held-out labeled points.
+    """
+    if not distributions or len(distributions) != len(true_indices):
+        raise ValueError("need equal, non-empty distributions and labels")
+    n_classes = len(distributions[0])
+    bias = [0.0] * n_classes
+    n = len(distributions)
+    for _ in range(epochs):
+        grad = [0.0] * n_classes
+        for probs, true_index in zip(distributions, true_indices):
+            corrected = apply_correction(probs, temperature, bias)
+            for c in range(n_classes):
+                grad[c] += corrected[c] - (1.0 if c == true_index else 0.0)
+        for c in range(n_classes):
+            bias[c] -= learning_rate * grad[c] / n
+    center = sum(bias) / n_classes
+    return [round(b - center, 6) for b in bias]
+
+
+def apply_correction(
+    probs: Sequence[float], temperature: float, bias: Optional[Sequence[float]] = None
+) -> List[float]:
+    """Temperature + per-class bias correction, renormalized."""
+    floor = 1e-12
+    scores = [
+        math.log(max(p, floor)) / temperature + (bias[i] if bias else 0.0)
+        for i, p in enumerate(probs)
+    ]
+    peak = max(scores)
+    exps = [math.exp(s - peak) for s in scores]
+    total = sum(exps)
+    return [e / total for e in exps]
+
+
+def selective_cutoff(
+    confidences: Sequence[float],
+    correct: Sequence[bool],
+    target_accuracy: float,
+    min_points: int = 8,
+) -> Optional[float]:
+    """Smallest confidence cutoff whose empirical selective accuracy meets the
+    target, maximizing coverage. None = no cutoff qualifies (abstain tier).
+
+    Requires at least ``min_points`` above the cutoff so a lucky handful
+    cannot fake the target; this is an empirical policy fit, not a
+    finite-sample guarantee - report it as such.
+    """
+    if not 0 < target_accuracy <= 1:
+        raise ValueError("target_accuracy must be in (0, 1]")
+    pairs = sorted(zip(confidences, correct), key=lambda x: x[0])
+    best: Optional[float] = None
+    for i in range(len(pairs)):
+        cutoff = pairs[i][0]
+        kept = pairs[i:]
+        if len(kept) < min_points:
+            break
+        accuracy = sum(1 for _, ok in kept if ok) / len(kept)
+        if accuracy >= target_accuracy:
+            best = round(cutoff, 6)
+            break  # smallest qualifying cutoff = maximum coverage
+    return best

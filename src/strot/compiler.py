@@ -173,6 +173,7 @@ class CompiledAsset:
     calibration: Optional[Dict[str, Any]] = None  #: fitted stats (None = uncalibrated)
     label_search: Optional[Dict[str, Any]] = None  #: measured-labeling scores (None = not measured)
     model_search: Optional[Dict[str, Any]] = None  #: zero-shot vs distilled scores (None = no distill)
+    policy: Optional[Dict[str, Any]] = None  #: fitted target-accuracy dispatch policy
 
     def save(self, path: Union[str, Path] = "compiled_pipeline.py") -> Path:
         """Persist the asset as an independent Python file."""
@@ -561,6 +562,81 @@ class StrotCompiler:
             return f"LABELS contains unknown action keys: {bad[:5]}"
         return None
 
+    @staticmethod
+    def _make_escalation_caller(escalate: Dict[str, str]):
+        def call(context: str, action_registry: Mapping[str, str]) -> Optional[str]:
+            newline = chr(10)
+            lines = newline.join(
+                f"- {key}: {desc}" for key, desc in action_registry.items()
+            )
+            prompt = (
+                "Pick the single best action for this record. Reply with ONLY "
+                "the action key, nothing else." + newline + newline
+                + "Actions:" + newline + lines + newline + newline
+                + "Record:" + newline + context + newline + newline + "Action key:"
+            )
+            try:
+                if escalate["provider"] == "anthropic":
+                    from anthropic import Anthropic
+
+                    response = Anthropic().messages.create(
+                        model=escalate["model"],
+                        max_tokens=16,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    text = "".join(
+                        b.text for b in response.content if b.type == "text"
+                    )
+                else:
+                    from openai import OpenAI
+
+                    response = OpenAI().chat.completions.create(
+                        model=escalate["model"],
+                        temperature=0.0,
+                        max_tokens=16,
+                        messages=[{"role": "user", "content": prompt}],
+                    )
+                    text = response.choices[0].message.content or ""
+            except Exception:
+                return None
+            key = text.strip().split()[0].strip(" :'`" + chr(34)) if text.strip() else ""
+            return key if key in action_registry else None
+
+        return call
+
+    def _collect_distributions(
+        self,
+        source: str,
+        records: List[Dict[str, Any]],
+        action_registry: Mapping[str, str],
+        question: Optional[str],
+        goal: str,
+    ) -> List[List[float]]:
+        import sys
+
+        module = self._load_candidate_module(source)
+        try:
+            router = module._RuntimeRouter()
+            routing_question = question or (
+                f"Which execution path best achieves the goal: {goal}?"
+            )
+            distributions = []
+            for record in records:
+                decision = router.select(
+                    module.route_context(dict(record)),
+                    routing_question,
+                    module._ROUTING_OPTIONS,
+                )
+                distributions.append(
+                    [
+                        max(decision.distribution.get(opt, 0.0), 1e-12)
+                        for opt in module._ROUTING_OPTIONS
+                    ]
+                )
+        finally:
+            sys.modules.pop("strot_golden_gate", None)
+        return distributions
+
     def _fit_calibration(
         self,
         source: str,
@@ -674,6 +750,8 @@ class StrotCompiler:
         target_risk: Optional[float] = None,
         measure_labels: bool = False,
         distill: bool = False,
+        target_accuracy: Optional[float] = None,
+        escalate_to: Optional[str] = None,
     ) -> CompiledAsset:
         """Run the full compile-time pipeline and return the production asset.
 
@@ -708,6 +786,32 @@ class StrotCompiler:
         """
         if target_risk is not None and not 0 < target_risk < 1:
             raise RouterConfigurationError("target_risk must be in (0, 1).")
+        if target_accuracy is not None and target_risk is not None:
+            raise RouterConfigurationError(
+                "Set either target_risk (conformal guarantee) or "
+                "target_accuracy (empirical dispatch policy), not both."
+            )
+        if target_accuracy is not None and not 0 < target_accuracy <= 1:
+            raise RouterConfigurationError("target_accuracy must be in (0, 1].")
+        escalate: Optional[Dict[str, str]] = None
+        if escalate_to is not None:
+            provider, _, esc_model = escalate_to.partition("/")
+            if provider not in ("anthropic", "openai") or not esc_model:
+                raise RouterConfigurationError(
+                    "escalate_to must look like 'anthropic/<model>' or "
+                    f"'openai/<model>', got {escalate_to!r}."
+                )
+            if target_accuracy is None and target_risk is None:
+                raise RouterConfigurationError(
+                    "escalate_to requires target_accuracy or target_risk "
+                    "(escalation fires on calibrated abstentions)."
+                )
+            escalate = {"provider": provider, "model": esc_model}
+        if distill and self.runtime_kind != "local":
+            raise RouterConfigurationError(
+                "distill requires a local decision model (the encoder supplies "
+                f"the embeddings); got {self.nlu_model!r}."
+            )
         if not action_registry:
             raise CompilationError("action_registry must contain at least one action.", attempts=0)
         if golden is not None:
@@ -747,7 +851,7 @@ class StrotCompiler:
         label_search: Optional[Dict[str, Any]] = None
         model_search: Optional[Dict[str, Any]] = None
         runtime_override: Optional[str] = None
-        if target_risk is not None or measure_labels or distill:
+        if target_risk is not None or measure_labels or distill or target_accuracy is not None:
             records = _sample_records(sample)
             if distill:
                 from . import distill as distill_mod
@@ -914,6 +1018,7 @@ class StrotCompiler:
                     conformal_q=float(calibration["conformal_quantile"]),
                     calibration=calibration,
                     runtime=runtime_override,
+                    escalate=escalate,
                 )
                 if golden:
                     error = self._test_golden_pipeline(source, golden)
@@ -927,6 +1032,112 @@ class StrotCompiler:
                             last_error=error,
                         )
 
+            if target_accuracy is not None:
+                from . import calibrate as calibrate_mod
+
+                true_calib = [
+                    action_keys.index(label) for label in labels_calib
+                ]
+                dists = self._collect_distributions(
+                    source, records_calib, action_registry, question, goal
+                )
+                # Fold hygiene inside the policy fit: corrections on half A,
+                # the dispatch cutoff on disjoint half B.
+                a_d, a_t = dists[0::2], true_calib[0::2]
+                b_d, b_t = dists[1::2], true_calib[1::2]
+                if not b_d:
+                    a_d, a_t, b_d, b_t = dists, true_calib, dists, true_calib
+                temperature = (
+                    calibrate_mod.fit_temperature(a_d, a_t) if len(a_d) >= 4 else 1.0
+                )
+                class_bias = (
+                    calibrate_mod.fit_class_bias(a_d, a_t, temperature)
+                    if len(a_d) >= 4
+                    else None
+                )
+                corrected = [
+                    calibrate_mod.apply_correction(d, temperature, class_bias)
+                    for d in b_d
+                ]
+                confidences = [max(p) for p in corrected]
+                correct_flags = [
+                    max(range(len(p)), key=p.__getitem__) == t
+                    for p, t in zip(corrected, b_t)
+                ]
+                cutoff = calibrate_mod.selective_cutoff(
+                    confidences, correct_flags, target_accuracy
+                )
+                kept = [
+                    ok for conf, ok in zip(confidences, correct_flags)
+                    if cutoff is not None and conf >= cutoff
+                ]
+                tier2_acc = None
+                if escalate is not None:
+                    below = [
+                        (records_calib[1::2][i] if len(b_d) != len(dists) else records_calib[i],
+                         b_t[i])
+                        for i, conf in enumerate(confidences)
+                        if cutoff is None or conf < cutoff
+                    ][:20]
+                    if below:
+                        hits = 0
+                        caller = self._make_escalation_caller(escalate)
+                        for record, true_index in below:
+                            picked = caller(
+                                json.dumps(record, default=str, sort_keys=True),
+                                action_registry,
+                            )
+                            if picked is not None and action_keys.index(picked) == true_index:
+                                hits += 1
+                        tier2_acc = round(hits / len(below), 4)
+                policy = {
+                    "target_accuracy": target_accuracy,
+                    "temperature": temperature,
+                    "class_bias": class_bias,
+                    "dispatch_cutoff": cutoff,
+                    "n_fit": len(a_d),
+                    "n_cutoff_fold": len(b_d),
+                    "tier1_coverage_est": (
+                        round(len(kept) / len(b_d), 4) if b_d else 0.0
+                    ),
+                    "tier1_accuracy_est": (
+                        round(sum(kept) / len(kept), 4) if kept else None
+                    ),
+                    "tier2_accuracy_est": tier2_acc,
+                    "note": (
+                        "empirical policy fit on held-out labeled records; "
+                        "NOT a finite-sample guarantee"
+                    ),
+                }
+                source = self._assemble(
+                    schema,
+                    goal,
+                    dict(action_registry),
+                    final_code,
+                    question,
+                    temperature=temperature,
+                    class_bias=class_bias,
+                    dispatch_cutoff=cutoff if cutoff is not None else 1.1,
+                    escalate=escalate,
+                    policy=policy,
+                    runtime=runtime_override,
+                )
+                if golden:
+                    error = self._test_golden_pipeline(source, golden)
+                    if error:
+                        raise CompilationError(
+                            "Policy-fitted artifact no longer satisfies the "
+                            f"golden records at target_accuracy={target_accuracy}:"
+                            f"\n{error}",
+                            attempts=attempts,
+                            last_error=error,
+                        )
+            else:
+                policy = None
+
+        if target_risk is None and target_accuracy is None:
+            policy = None
+
         return CompiledAsset(
             source=source,
             nlu_model=self.nlu_model,
@@ -937,6 +1148,7 @@ class StrotCompiler:
             calibration=calibration,
             label_search=label_search,
             model_search=model_search,
+            policy=policy,
         )
 
     @staticmethod
@@ -1249,6 +1461,10 @@ class StrotCompiler:
         conformal_q: Optional[float] = None,
         calibration: Optional[Dict[str, Any]] = None,
         runtime: Optional[str] = None,
+        class_bias: Optional[List[float]] = None,
+        dispatch_cutoff: Optional[float] = None,
+        escalate: Optional[Dict[str, str]] = None,
+        policy: Optional[Dict[str, Any]] = None,
     ) -> str:
         header = templates.ASSET_HEADER_TEMPLATE.format(
             nlu_model=self.nlu_model,
@@ -1258,6 +1474,10 @@ class StrotCompiler:
             temperature=repr(temperature),
             conformal_q=repr(conformal_q),
             calibration_literal=repr(calibration or {}),
+            class_bias=repr(class_bias),
+            dispatch_cutoff=repr(dispatch_cutoff),
+            escalate_literal=repr(escalate),
+            policy_literal=repr(policy or {}),
             schema_literal=repr(schema.to_dict()),
         )
         if runtime == "distilled":

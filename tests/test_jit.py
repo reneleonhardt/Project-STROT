@@ -523,6 +523,64 @@ class TestDistill:
         assert plain.cache_key != distilled.cache_key
 
 
+class TestTargetAccuracy:
+    # 24 labeled records: 16 clear (separable by keyword), 8 ambiguous.
+    SAMPLE24 = (
+        [{"ticket_id": i, "body": "double billing charge refund" if i % 3 else "app crash defect bug",
+          "tier": "pro"} for i in range(16)]
+        + [{"ticket_id": 100 + i, "body": f"misc note {i}", "tier": None} for i in range(8)]
+    )
+    # Ambiguous records get genuinely 50/50 labels (alternating) so neither
+    # argmax tie-breaking nor the fitted class bias can make them "correct":
+    # they stay low-confidence and half-wrong, forcing the cutoff above them.
+    TEACHER = ("```python\nLABELS = ["
+               + ", ".join('"billing"' if i % 3 else '"defect"' for i in range(16))
+               + ", " + ", ".join('"billing"' if i % 2 else '"defect"' for i in range(8))
+               + "]\n```")
+
+    def test_policy_fits_cutoff_and_dispatches_selectively(self, tmp_path, fake_runtime):
+        llm = ScriptedLLM([VALID_PATHS, self.TEACHER])
+        result = strot.run(
+            self.SAMPLE24, QUERY, REGISTRY, llm=llm, state=tmp_path,
+            sample_size=24, target_accuracy=0.9, measure_labels=False,
+        )
+        meta = json.loads(result.artifact_path.with_suffix(".json").read_text())
+        policy = meta["policy"]
+        assert policy["target_accuracy"] == 0.9
+        assert policy["dispatch_cutoff"] is not None
+        assert "NOT a finite-sample guarantee" in policy["note"]
+        # Clear records dispatch locally; ambiguous ones (no keywords) abstain.
+        assert len(result.outcomes) > 0
+        assert all(o["decided_by"] == "local" for o in result.outcomes)
+        ambiguous_ids = {100 + i for i in range(8)}
+        fallback_ids = {f["record"]["ticket_id"] for f in result.fallbacks}
+        assert ambiguous_ids <= fallback_ids
+
+    def test_mutual_exclusion_with_target_risk(self, tmp_path):
+        with pytest.raises(RouterConfigurationError, match="not both"):
+            strot.run(SAMPLE, QUERY, REGISTRY, llm=ExplodingLLM(), state=tmp_path,
+                      target_risk=0.1, target_accuracy=0.8)
+
+    def test_escalate_requires_a_policy(self, tmp_path):
+        with pytest.raises(RouterConfigurationError, match="escalate_to requires"):
+            strot.run(SAMPLE, QUERY, REGISTRY, llm=ExplodingLLM(), state=tmp_path,
+                      escalate_to="anthropic/claude-haiku-4-5")
+
+    def test_bad_escalate_spec_rejected(self, tmp_path):
+        with pytest.raises(RouterConfigurationError, match="escalate_to must"):
+            strot.run(SAMPLE, QUERY, REGISTRY, llm=ExplodingLLM(), state=tmp_path,
+                      target_accuracy=0.8, escalate_to="hf/some-model")
+
+    def test_target_accuracy_in_cache_key(self, tmp_path, fake_runtime):
+        plain = strot.run(SAMPLE, QUERY, REGISTRY, llm=ScriptedLLM([VALID_PATHS]), state=tmp_path)
+        policy = strot.run(
+            self.SAMPLE24, QUERY, REGISTRY,
+            llm=ScriptedLLM([VALID_PATHS, self.TEACHER]), state=tmp_path,
+            sample_size=24, target_accuracy=0.9, measure_labels=False,
+        )
+        assert plain.cache_key != policy.cache_key
+
+
 class TestEpisodeLog:
     def test_promoted_compile_logged_once(self, tmp_path, fake_runtime):
         strot.run(SAMPLE, QUERY, REGISTRY, llm=ScriptedLLM([VALID_PATHS]), state=tmp_path)

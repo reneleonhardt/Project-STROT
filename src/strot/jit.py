@@ -67,10 +67,14 @@ class RunResult:
                 "artifact": str(self.artifact_path),
             }
         per_action: Dict[str, int] = {}
+        escalated = 0
         for outcome in self.outcomes:
             per_action[outcome["action"]] = per_action.get(outcome["action"], 0) + 1
+            if outcome.get("decided_by") == "escalated":
+                escalated += 1
         return {
             "processed": len(self.outcomes),
+            "escalated": escalated,
             "fallbacks": len(self.fallbacks),
             "actions": per_action,
             "cache_hit": self.cache_hit,
@@ -134,6 +138,8 @@ def cache_key(
     target_risk: Optional[float] = None,
     measure_labels: bool = False,
     distill: bool = False,
+    target_accuracy: Optional[float] = None,
+    escalate_to: Optional[str] = None,
 ) -> str:
     from . import __version__
 
@@ -150,6 +156,8 @@ def cache_key(
         "target_risk": target_risk,
         "measure_labels": measure_labels,
         "distill": distill,
+        "target_accuracy": target_accuracy,
+        "escalate_to": escalate_to,
     }
     canonical = json.dumps(payload, sort_keys=True, default=str)
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
@@ -236,6 +244,8 @@ def run(
     target_risk: Optional[float] = None,
     measure_labels: Optional[bool] = None,
     distill: bool = False,
+    target_accuracy: Optional[float] = None,
+    escalate_to: Optional[str] = None,
 ) -> RunResult:
     """Process ``data`` against ``query``, JIT-compiling the pipeline on first use.
 
@@ -288,6 +298,17 @@ def run(
             it in if it beats the zero-shot router on a held-out fold. Use a
             larger sample_size (100+); requires the [local] runtime deps on
             the compile box.
+        target_accuracy: Empirical dispatch policy (mutually exclusive with
+            target_risk): temperature + per-class bias corrections and a
+            dispatch cutoff are fitted on held-out teacher-labeled folds so
+            auto-decided records meet the accuracy target; below-cutoff
+            records abstain (or escalate). An empirical fit, NOT a
+            finite-sample guarantee; reported in POLICY metadata.
+        escalate_to: Two-tier cascade: "anthropic/<model>" or
+            "openai/<model>". Abstentions are arbitrated by this stronger
+            model at runtime (bounded: its reply must exactly match a
+            registry key, else the record falls back to humans). Only the
+            escalated slice pays per-record cost.
     """
     if not action_registry:
         raise RouterConfigurationError(
@@ -304,7 +325,7 @@ def run(
     key = cache_key(
         query, action_registry, nlu, schema, question, confidence_threshold,
         golden=golden, target_risk=target_risk, measure_labels=effective_measure,
-        distill=distill,
+        distill=distill, target_accuracy=target_accuracy, escalate_to=escalate_to,
     )
     artifact_path, meta_path = _artifact_paths(state, key)
 
@@ -327,6 +348,8 @@ def run(
                 target_risk=target_risk,
                 measure_labels=effective_measure,
                 distill=distill,
+                target_accuracy=target_accuracy,
+                escalate_to=escalate_to,
             )
         except Exception as exc:
             _log_episode(state, {
@@ -342,6 +365,7 @@ def run(
             "golden_count": len(golden or []), "target_risk": target_risk,
             "attempts": asset.attempts, "calibration": asset.calibration,
             "label_search": asset.label_search, "model_search": asset.model_search,
+            "policy": asset.policy,
         })
         attempts = asset.attempts
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
@@ -359,6 +383,7 @@ def run(
                     "calibration": asset.calibration,
                     "label_search": asset.label_search,
                     "model_search": asset.model_search,
+                    "policy": asset.policy,
                 },
                 indent=2,
             ),
