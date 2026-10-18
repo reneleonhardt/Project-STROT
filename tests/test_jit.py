@@ -551,7 +551,6 @@ class TestTargetAccuracy:
         assert "NOT a finite-sample guarantee" in policy["note"]
         # Clear records dispatch locally; ambiguous ones (no keywords) abstain.
         assert len(result.outcomes) > 0
-        assert all(o["decided_by"] == "local" for o in result.outcomes)
         ambiguous_ids = {100 + i for i in range(8)}
         fallback_ids = {f["record"]["ticket_id"] for f in result.fallbacks}
         assert ambiguous_ids <= fallback_ids
@@ -560,16 +559,6 @@ class TestTargetAccuracy:
         with pytest.raises(RouterConfigurationError, match="not both"):
             strot.run(SAMPLE, QUERY, REGISTRY, llm=ExplodingLLM(), state=tmp_path,
                       target_risk=0.1, target_accuracy=0.8)
-
-    def test_escalate_requires_a_policy(self, tmp_path):
-        with pytest.raises(RouterConfigurationError, match="escalate_to requires"):
-            strot.run(SAMPLE, QUERY, REGISTRY, llm=ExplodingLLM(), state=tmp_path,
-                      escalate_to="anthropic/claude-haiku-4-5")
-
-    def test_bad_escalate_spec_rejected(self, tmp_path):
-        with pytest.raises(RouterConfigurationError, match="escalate_to must"):
-            strot.run(SAMPLE, QUERY, REGISTRY, llm=ExplodingLLM(), state=tmp_path,
-                      target_accuracy=0.8, escalate_to="hf/some-model")
 
     def test_target_accuracy_in_cache_key(self, tmp_path, fake_runtime):
         plain = strot.run(SAMPLE, QUERY, REGISTRY, llm=ScriptedLLM([VALID_PATHS]), state=tmp_path)

@@ -137,7 +137,6 @@ Semantics worth knowing:
 | `measure_labels` | None | score synthesized labels vs bare registry keys on the teacher-labeled sample, keep the winner; defaults ON when `target_risk` is set |
 | `distill` | False | train a logistic head on the frozen encoder's embeddings from teacher-labeled records; baked in only if it beats zero-shot on a held-out fold (three-way split: train/measure/calibrate). Needs `sample_size` ≥ 24 (100+ recommended) and `[local]` deps on the compile box |
 | `target_accuracy` | None | empirical dispatch policy (mutually exclusive with `target_risk`): fit temperature + per-class bias corrections and a confidence cutoff on held-out folds so auto-decided records meet the target; below-cutoff records abstain or escalate. NOT a finite-sample guarantee. **Optimizes accuracy** — wrong objective for imbalanced tasks where minority recall matters (it will trade recall for accuracy) |
-| `escalate_to` | None | `"anthropic/<model>"` or `"openai/<model>"`: two-tier cascade. Abstaining records are arbitrated by this stronger model at runtime (bounded — reply must match a registry key, else human fallback). Only worth it when tier-2 substantially beats the local arbiter |
 | `execute` | True | False = warm the cache only (no runtime needed) |
 
 Returns `RunResult`: `outcomes` (list of `{index, record, action, confidence, result}`), `fallbacks` (`{index, record, confidence, reason}`), `pipeline` (live, for streaming single records), `cache_hit`, `attempts`, `artifact_path`, `summary()`.

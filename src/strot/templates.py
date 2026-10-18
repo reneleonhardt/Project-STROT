@@ -39,7 +39,6 @@ CONFORMAL_Q = {conformal_q}
 CALIBRATION: Dict[str, Any] = {calibration_literal}
 CLASS_BIAS = {class_bias}
 DISPATCH_CUTOFF = {dispatch_cutoff}
-ESCALATE = {escalate_literal}
 POLICY: Dict[str, Any] = {policy_literal}
 
 DATASET_SCHEMA: Dict[str, Any] = {schema_literal}
@@ -425,51 +424,6 @@ _ROUTING_OPTIONS: List[str] = [ROUTING_LABELS[key] for key in ACTION_REGISTRY]
 _ACTION_KEYS: List[str] = list(ACTION_REGISTRY)
 
 
-def _escalate_choice(context: str):
-    """Tier-2 arbiter: ask a stronger model to pick ONE action key.
-
-    Bounded by construction - the reply must exactly match a registry key or
-    the escalation is treated as declined (-> human fallback). Requires the
-    provider package + API key at runtime; only the escalated slice pays.
-    """
-    newline = chr(10)
-    lines = newline.join(
-        "- " + key + ": " + desc for key, desc in ACTION_REGISTRY.items()
-    )
-    prompt = (
-        "Pick the single best action for this record. Reply with ONLY the "
-        "action key, nothing else." + newline + newline
-        + "Actions:" + newline + lines + newline + newline
-        + "Record:" + newline + context + newline + newline + "Action key:"
-    )
-    try:
-        if ESCALATE["provider"] == "anthropic":
-            from anthropic import Anthropic
-
-            response = Anthropic().messages.create(
-                model=ESCALATE["model"],
-                max_tokens=16,
-                messages=[{{"role": "user", "content": prompt}}],
-            )
-            text = "".join(
-                block.text for block in response.content if block.type == "text"
-            )
-        else:
-            from openai import OpenAI
-
-            response = OpenAI().chat.completions.create(
-                model=ESCALATE["model"],
-                temperature=0.0,
-                max_tokens=16,
-                messages=[{{"role": "user", "content": prompt}}],
-            )
-            text = response.choices[0].message.content or ""
-    except Exception:
-        return None
-    key = text.strip().split()[0].strip(" :'`" + chr(34)) if text.strip() else ""
-    return key if key in ACTION_REGISTRY else None
-
-
 class CompiledPipeline:
     """Self-routing execution asset: route each record, enforce confidence,
     dispatch to the statically compiled path."""
@@ -540,20 +494,7 @@ class CompiledPipeline:
                 "action": action_key,
                 "confidence": confidence,
                 "result": result,
-                "decided_by": "local",
             }}
-
-        if ESCALATE is not None:
-            escalated_key = _escalate_choice(context)
-            if escalated_key is not None:
-                result = _HANDLERS[escalated_key](dict(record))
-                return {{
-                    "action": escalated_key,
-                    "confidence": confidence,
-                    "result": result,
-                    "decided_by": "escalated",
-                }}
-            abstain_reason += "; escalation arbiter declined or failed"
 
         raise FallbackException(
             abstain_reason + "; falling back.",
