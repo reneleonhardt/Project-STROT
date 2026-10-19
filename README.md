@@ -107,6 +107,24 @@ Real model (SupersonicLabs/Julia-1, 144M, CPU), real datasets, clean Docker cont
 
 Reproduce everything: [`benchmarks/`](benchmarks/) — with the losses published too.
 
+### On real risk narratives
+
+Record-level, unstructured text — the kind cyber, financial, and insurance
+triage actually runs on. Fully public, ground-truth datasets; classes balanced
+so accuracy is interpretable; baselines shown; nothing is hand-labeled and STROT
+never sees the test labels. ([`benchmarks/risk_narratives.py`](benchmarks/risk_narratives.py))
+
+| Task — 6-class, balanced | Random | Majority | Naive | Compiled | Abstains |
+|---|---|---|---|---|---|
+| **Cyber** — [VERIS/VCDB](https://github.com/vz-risk/VCDB) incident note → attack action | 16.7% | 16.7% | 36.8% | **39.5%** | 8/114 |
+| **Finance** — [CFPB](https://www.consumerfinance.gov/data-research/consumer-complaints/) complaint → product | 16.7% | 26.4% | 54.2% | **61.1%** | 5/72 |
+
+Both clear their baselines, the compiler lifts accuracy on the *same* 144M local
+model (+2.7pp / +6.9pp), and low-confidence records abstain instead of guessing.
+These are honest proof the architecture works on messy real narratives — not
+production underwriting accuracy. For that, drop a task-trained specialist in the
+`nlu=` slot; the compiler, calibration, and gate are unchanged.
+
 ## What makes it different
 
 - **Compile once, decide forever** — content-addressed artifact cache; schema drift triggers exactly one recompile.

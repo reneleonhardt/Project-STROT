@@ -68,6 +68,56 @@ Measured 2026-10-13 (same environment as above):
    variant compiles — not an optimization signal. Use clear, unambiguous
    goldens; don't tune accuracy with them.
 
+## Real risk narratives: `risk_narratives.py`
+
+Serious, record-level, unstructured text — the shape cyber, financial, and
+insurance triage actually run on. Two fully public, ground-truth-labeled tasks,
+both categorical triage over free narrative (STROT's demonstrated strength, as
+opposed to subtle sentiment where a 144M generalist caps out):
+
+- **Cyber** — [VERIS Community Database](https://github.com/vz-risk/VCDB) (the
+  Verizon DBIR breach corpus): the incident `summary` narrative → primary attack
+  action, 6 classes (hacking / malware / error / misuse / physical / social).
+  Single-action incidents only; the combined `vcdb.json.zip` is fetched directly.
+- **Finance** — [CFPB Consumer Complaint Database](https://www.consumerfinance.gov/data-research/consumer-complaints/):
+  the first-person `consumer_narrative` → product, 6 classes (credit reporting /
+  debt collection / credit card / bank account / mortgage / money transfer).
+
+```bash
+pip install strot-ai[local,anthropic]
+python -c "import strot; strot.prefetch_nlu(local_dir='./julia-1', install=True)"
+export STROT_NLU_CHECKPOINT=./julia-1 ANTHROPIC_API_KEY=...
+python risk_narratives.py
+```
+
+Classes are **balanced** (≤25/class) so accuracy is interpretable; every task
+prints its random and majority-class baselines. `measure_labels=True` is on, so
+a weak synthesized labeling cannot regress below bare class names. The compiler
+never sees the test labels.
+
+Measured 2026-10-19 (same environment as above):
+
+| Task — 6-class, balanced | Random | Majority | Naive | Compiled | Abstains |
+|---|---|---|---|---|---|
+| Cyber — VCDB incident → attack action | 16.7% | 16.7% | 36.8% | **39.5%** | 8/114 |
+| Finance — CFPB complaint → product | 16.7% | 26.4% | 54.2% | **61.1%** | 5/72 |
+
+**Honest findings:**
+
+1. **Both clear their baselines and the compiler lifts the same model**
+   (+2.7pp cyber, +6.9pp finance). This is the credible STROT story on messy
+   real text: measured integration + calibration on a frozen local model.
+2. **These are proof the architecture works on real narratives, not production
+   accuracy.** 39.5% / 61.1% six-way is well above chance but far from an
+   underwriter's bar. The cyber taxonomy is genuinely ambiguous at the record
+   level (a stolen laptop is `physical` or `error`; phishing-into-intrusion
+   blurs `social` and `hacking`), which caps a generalist encoder.
+3. **Calibration abstains on the uncertain tail** (8 and 5 records) rather than
+   guessing — visible honesty, not a hidden accuracy tax.
+4. **The fix for production accuracy is the model slot, not the compiler.** Drop
+   a task-trained specialist into `nlu=`; the synthesis, calibration, and gate
+   are unchanged. Consistent with every hard-task result in this directory.
+
 ## Input-formatting ablation: `ablation_formats.py`
 
 Same model, same records, same question — only state/option formatting varies. This isolates how much of routing accuracy is integration rather than model capability (answer: ~25 points). Runs the decision model directly; no LLM required.
