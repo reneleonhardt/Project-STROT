@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>STROT plays Pac-Man</title>
+<style>
+  :root { --neon:#2a2aff; --pac:#ffe900; --bg:#05050c; --fg:#e8e8ff; --accent:#7c3aed; }
+  * { box-sizing: border-box; }
+  body {
+    margin:0; background:var(--bg); color:var(--fg); min-height:100vh;
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:14px; padding:20px;
+  }
+  h1 { font-size:15px; letter-spacing:3px; margin:0; color:var(--fg); font-weight:700; }
+  h1 b { color:var(--accent); }
+  .hud {
+    width:100%; max-width:520px; display:flex; justify-content:space-between;
+    font-size:13px; letter-spacing:1px; text-transform:uppercase;
+  }
+  .hud .lbl { color:#6a6a8a; }
+  .hud .val { color:var(--fg); }
+  .hud .val.score { color:var(--pac); }
+  canvas { background:var(--bg); border-radius:6px; box-shadow:0 0 40px rgba(42,42,255,.15); }
+  .controls { display:flex; gap:10px; align-items:center; font-size:12px; }
+  button {
+    background:#12122a; color:var(--fg); border:1px solid #2a2a4a; border-radius:5px;
+    padding:7px 14px; cursor:pointer; font-family:inherit; letter-spacing:1px;
+  }
+  button:hover { border-color:var(--accent); }
+  input[type=range]{ accent-color:var(--accent); }
+  .tag { color:#6a6a8a; font-size:11px; letter-spacing:1px; }
+  .tag a { color:var(--accent); text-decoration:none; }
+  .conf { min-width:62px; }
+</style>
+</head>
+<body>
+  <h1>STROT <b>▸</b> PAC-MAN &nbsp;·&nbsp; a 144M model decides chase-vs-flee each frame · code executes the move</h1>
+
+  <div class="hud">
+    <div><span class="lbl">Model</span> <span class="val" id="model">STROT ▸ Julia-1</span></div>
+    <div><span class="lbl">Score</span> <span class="val score" id="score">0</span></div>
+    <div><span class="lbl">Decision</span> <span class="val conf" id="strat">—</span></div>
+    <div><span class="lbl">Conf</span> <span class="val" id="conf">—</span></div>
+  </div>
+
+  <canvas id="game" width="504" height="408"></canvas>
+
+  <div class="controls">
+    <button id="playBtn">⏸ Pause</button>
+    <button id="restartBtn">↻ Restart</button>
+    <span class="lbl">Speed</span>
+    <input type="range" id="speed" min="1" max="30" value="12" />
+    <span class="val" id="result"></span>
+  </div>
+
+  <div class="tag">decision per frame · no LLM at runtime · <a href="https://strot.ai">strot.ai</a></div>
+
+<script>
+const CELL = 24;
+const COLORS = ["#ff3b3b", "#ffb8ff", "#00e5ff", "#ffb852"]; // ghost palette
+let RUN = null, frame = 0, playing = true, timer = null;
+
+const cv = document.getElementById("game"), ctx = cv.getContext("2d");
+const $ = id => document.getElementById(id);
+
+async function load() {
+  // Embed the recording as window.PACMAN_RUN, or drop pacman_run.json beside this file.
+  if (window.PACMAN_RUN) { RUN = window.PACMAN_RUN; }
+  else { RUN = await (await fetch("pacman_run.json")).json(); }
+  const cols = RUN.maze[0].length, rows = RUN.maze.length;
+  cv.width = cols * CELL; cv.height = rows * CELL;
+  $("model").textContent = RUN.model || "STROT ▸ Julia-1";
+  restart();
+}
+
+function drawMaze() {
+  ctx.fillStyle = "#05050c"; ctx.fillRect(0, 0, cv.width, cv.height);
+  ctx.strokeStyle = "#2a2aff"; ctx.lineWidth = 2;
+  for (let y = 0; y < RUN.maze.length; y++) {
+    for (let x = 0; x < RUN.maze[y].length; x++) {
+      if (RUN.maze[y][x] === "#") {
+        ctx.strokeRect(x*CELL+3, y*CELL+3, CELL-6, CELL-6);
+      }
+    }
+  }
+}
+
+function drawFrame() {
+  const f = RUN.frames[frame];
+  drawMaze();
+  // dots
+  for (const [x, y] of f.dots) {
+    ctx.fillStyle = "#ffd36a";
+    ctx.beginPath(); ctx.arc(x*CELL+CELL/2, y*CELL+CELL/2, 2.5, 0, 7); ctx.fill();
+  }
+  // ghosts
+  f.ghosts.forEach(([x, y], i) => {
+    ctx.fillStyle = COLORS[i % COLORS.length];
+    const cx = x*CELL+CELL/2, cy = y*CELL+CELL/2, r = CELL/2-3;
+    ctx.beginPath();
+    ctx.arc(cx, cy-1, r, Math.PI, 0); ctx.lineTo(cx+r, cy+r);
+    for (let k=0;k<3;k++){ ctx.lineTo(cx+r-(k*2+1)*r/3, cy+r-4); ctx.lineTo(cx+r-(k*2+2)*r/3, cy+r); }
+    ctx.closePath(); ctx.fill();
+    ctx.fillStyle="#fff";
+    ctx.beginPath(); ctx.arc(cx-r/2.5, cy-2, 2.2, 0, 7); ctx.arc(cx+r/2.5, cy-2, 2.2, 0, 7); ctx.fill();
+  });
+  // pac-man with mouth toward move dir
+  const [px, py] = f.grid_pac, cx = px*CELL+CELL/2, cy = py*CELL+CELL/2, r = CELL/2-2;
+  const ang = {right:0, down:Math.PI/2, left:Math.PI, up:-Math.PI/2}[f.move] || 0;
+  const mouth = 0.28 * Math.PI;
+  ctx.fillStyle = "#ffe900";
+  ctx.beginPath(); ctx.moveTo(cx, cy);
+  ctx.arc(cx, cy, r, ang+mouth, ang-mouth); ctx.closePath(); ctx.fill();
+  // confidence label next to pac (like the reference)
+  ctx.fillStyle = "#ffe900"; ctx.font = "11px ui-monospace, monospace";
+  ctx.fillText(Math.round(f.confidence*100) + "%", cx+r+2, cy+3);
+
+  $("score").textContent = f.score;
+  const label = (f.strategy || f.move).replace("_", " ");
+  $("strat").textContent = label;
+  $("strat").style.color = (f.strategy === "flee_ghost") ? "#ff6b6b" : "#ffe900";
+  $("conf").textContent = Math.round(f.confidence*100) + "%";
+}
+
+function tick() {
+  if (!playing) return;
+  drawFrame();
+  frame++;
+  if (frame >= RUN.frames.length) {
+    frame = RUN.frames.length - 1; drawFrame(); playing = false;
+    $("playBtn").textContent = "▸ Play";
+    const r = { won:"CLEARED!", caught:"CAUGHT", timeout:"TIME" }[RUN.result] || RUN.result;
+    $("result").textContent = `${r} · ${RUN.dots_eaten}/${RUN.start_dots} dots`;
+  }
+}
+
+function loop() {
+  const fps = parseInt($("speed").value, 10);
+  clearInterval(timer);
+  timer = setInterval(tick, 1000 / fps);
+}
+
+function restart() { frame = 0; playing = true; $("playBtn").textContent = "⏸ Pause"; $("result").textContent=""; loop(); }
+
+$("playBtn").onclick = () => { playing = !playing; $("playBtn").textContent = playing ? "⏸ Pause" : "▸ Play"; };
+$("restartBtn").onclick = restart;
+$("speed").oninput = loop;
+load();
+</script>
+</body>
+</html>
