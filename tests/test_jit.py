@@ -18,7 +18,7 @@ import pytest
 import strot
 from strot.exceptions import RouterConfigurationError, SchemaIntrospectionError
 
-from strot.jit import as_records, cache_key, schema_fingerprint
+from strot.jit import _load_artifact, as_records, cache_key, schema_fingerprint
 from strot.schema import introspect_schema
 
 SAMPLE = [
@@ -236,6 +236,26 @@ class TestCacheKey:
 
 
 class TestRun:
+    def test_failed_load_does_not_poison_cache(self, tmp_path):
+        path = tmp_path / "asset.py"
+        path.write_text("invalid syntax here\n")
+        with pytest.raises(RouterConfigurationError, match="failed to load"):
+            _load_artifact(path, "failed_load")
+        path.write_text("value = 1\n")
+        assert _load_artifact(path, "failed_load").value == 1
+
+    def test_load_ignores_stale_bytecode(self, tmp_path):
+        import os
+        import py_compile
+
+        path = tmp_path / "asset.py"
+        path.write_text("value = 'first'\n")
+        stamp = path.stat()
+        py_compile.compile(str(path), doraise=True)
+        path.write_text("value = 'other'\n")
+        os.utime(path, ns=(stamp.st_atime_ns, stamp.st_mtime_ns))
+        assert _load_artifact(path, "stale_bytecode").value == "other"
+
     def test_cache_miss_compiles_persists_and_executes(self, tmp_path, fake_runtime):
         llm = ScriptedLLM([VALID_PATHS])
         result = strot.run(SAMPLE, QUERY, REGISTRY, llm=llm, state=tmp_path)
@@ -260,6 +280,30 @@ class TestRun:
         assert result.cache_hit is True
         assert result.attempts == 0
         assert len(result.outcomes) == 2
+
+    def test_state_directories_do_not_share_loaded_code(self, tmp_path, fake_runtime):
+        for directory, queue in [("first", "billing"), ("second", "changed")]:
+            paths = VALID_PATHS.replace('"queue": "billing"', f'"queue": "{queue}"')
+            for llm in [ScriptedLLM([paths]), ExplodingLLM()]:
+                result = strot.run(SAMPLE, QUERY, REGISTRY, llm=llm, state=tmp_path / directory)
+                assert result.outcomes[0]["result"]["queue"] == queue
+
+    @pytest.mark.parametrize("execute", [True, False])
+    @pytest.mark.parametrize("mode", ["run", "decide"])
+    def test_recompile_reloads_code(self, tmp_path, fake_runtime, execute, mode):
+        call = getattr(strot, mode)
+        args = (SAMPLE, QUERY, REGISTRY) if mode == "run" else (SAMPLE, DECIDE_CONFIG)
+        source = VALID_PATHS if mode == "run" else VALID_DECIDE
+        first = call(*args, llm=ScriptedLLM([source]), state=tmp_path)
+        first.artifact_path.unlink()
+        paths = source.replace('return str(record.get("body", ""))', 'return "app crash defect"')
+        second = call(*args, llm=ScriptedLLM([paths]), state=tmp_path, execute=execute)
+        assert not second.cache_hit
+        warm = call(*args, llm=ExplodingLLM(), state=tmp_path)
+        if mode == "run":
+            assert warm.outcomes[0]["action"] == "defect"
+        else:
+            assert warm.outcomes[0]["decision"]["choices"]["team"]["selected"] == "engineering"
 
     def test_lazy_string_spec_not_resolved_on_hit(self, tmp_path, fake_runtime):
         strot.run(SAMPLE, QUERY, REGISTRY, llm=ScriptedLLM([VALID_PATHS]), state=tmp_path)

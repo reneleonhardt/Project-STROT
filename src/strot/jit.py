@@ -188,15 +188,21 @@ def _artifact_paths(state: Union[str, Path], key: str) -> "tuple[Path, Path]":
     return state_dir / f"{stem}.py", state_dir / f"{stem}.json"
 
 
+def _artifact_module_name(path: Path, key: str) -> str:
+    location = hashlib.sha256(str(path.absolute()).encode("utf-8")).hexdigest()[:16]
+    return f"strot_compiled_{key}_{location}"
+
+
 def _load_artifact(path: Path, key: str) -> Any:
-    module_name = f"strot_compiled_{key[:_KEY_PREFIX_LEN]}"
+    module_name = _artifact_module_name(path, key)
     if module_name in sys.modules:
         return sys.modules[module_name]
     spec = importlib.util.spec_from_file_location(module_name, path)
     module = importlib.util.module_from_spec(spec)
     sys.modules[module_name] = module
     try:
-        spec.loader.exec_module(module)
+        # Read source directly so a fast recompile cannot reuse stale bytecode.
+        exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
     except Exception as exc:
         del sys.modules[module_name]
         raise RouterConfigurationError(
@@ -363,6 +369,7 @@ def run(
         attempts = asset.attempts
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         asset.save(artifact_path)
+        sys.modules.pop(_artifact_module_name(artifact_path, key), None)
         meta_path.write_text(
             json.dumps(
                 {
@@ -493,6 +500,7 @@ def decide(
         attempts = asset.attempts
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
         asset.save(artifact_path)
+        sys.modules.pop(_artifact_module_name(artifact_path, key), None)
         meta_path.write_text(
             json.dumps(
                 {
