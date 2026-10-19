@@ -19,10 +19,10 @@ nearest-dot bearing, safe moves) once via the LLM, then the local model makes a
 | | |
 |---|---|
 | Result | survived all 400 frames |
-| Score / dots | 300 · 30 of 167 |
-| Strategy mix | 214 chase · 186 flee — the model **modulates** by ghost distance |
-| Mean confidence | 0.86 |
+| Score / dots | 630 · 63 of 167 |
+| Mean confidence | 0.85 |
 | Runtime cost | ~60 ms/decision, CPU, $0 |
+| Compile cost (one-time) | ~$0.03 of LLM tokens, once |
 
 ## Honest notes
 
@@ -32,8 +32,12 @@ nearest-dot bearing, safe moves) once via the LLM, then the local model makes a
   them spatially. Deciding chase-vs-flee is a real decision within its
   capability; the spatial execution is compiled code. That split *is* the STROT
   idea: the model decides, the compiler handles everything around it.
-- It plays cautiously (flees often → fewer dots than a hand-tuned baseline's 79)
-  but survives — a genuine, imperfect game, not a scripted win.
+- **Honest about the model's limits:** across fresh compiles the chosen
+  strategy varies a lot (some compiles chase throughout, others flee
+  throughout) — a 144M model's strategy choice here is not reliably
+  state-dependent. This recording is a strong-playing run (survives, 63 dots);
+  it is a real game, not a scripted win, and the variance is exactly what the
+  golden-record gate is for in production.
 
 ## Regenerate
 
