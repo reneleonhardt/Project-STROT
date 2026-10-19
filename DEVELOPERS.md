@@ -190,6 +190,7 @@ To add a new local engine, implement the strategy contract — `select(state, qu
 |---|---|
 | `"anthropic/claude-opus-4-8"` | Anthropic API (`[anthropic]` extra, `ANTHROPIC_API_KEY`) |
 | `"openai/gpt-4o"` or bare model | OpenAI API (`[hosted]` extra, `OPENAI_API_KEY`) |
+| `"codex-cli"` / `"codex-cli/<model>"` | Codex CLI with saved login. Run `codex login` for subscription access. No SDK required. |
 | `"claude-cli"` / `"claude-cli/<model>"` | local Claude Code CLI as proxy (no key, no SDK) |
 
 Specs resolve **only on a cache miss** — a warm production box never needs the LLM dependency or key.
@@ -216,6 +217,14 @@ monkeypatch.setenv("STROT_NLU_CHECKPOINT", str(tmp_path))      # skip downloads
 ```
 
 and script the LLM with a deterministic callable. The repo's `make_paths()` helper shows the exact synthesis contract a fake must satisfy. For integration tests against the real model, bake the checkpoint into a Docker image with `prefetch_nlu` (the repo's test images build in under a minute once the heavy layers are cached).
+
+To test the real Julia model without downloads, use an installed inference package and a cached checkpoint:
+
+```bash
+STROT_TEST_CHECKPOINT=/path/to/Julia-1 python -m pytest -q tests/test_quality.py
+```
+
+This test uses nine ticket cases and a fixed compiler response. It does not test live LLM output or general model accuracy.
 
 ## Versioning and cache busting
 

@@ -32,6 +32,7 @@ from .compiler import (
     StrotCompiler,
     anthropic_llm_client,
     claude_cli_llm_client,
+    codex_cli_llm_client,
     openai_llm_client,
 )
 from .exceptions import RouterConfigurationError, SchemaIntrospectionError
@@ -39,7 +40,7 @@ from .router import CONFIDENCE_THRESHOLD, DEFAULT_NLU_MODEL
 from .schema import DatasetSchema, introspect_schema
 
 #: ``llm`` parameter: a client callable, or a lazy spec string resolved only
-#: on a cache miss ("openai/gpt-4o", "gpt-4o", "claude-cli", "claude-cli/sonnet").
+#: on a cache miss ("openai/gpt-4o", "gpt-4o", "codex-cli", "claude-cli/sonnet").
 LLMSpec = Union[str, LLMClient]
 
 _KEY_PREFIX_LEN = 16
@@ -166,6 +167,8 @@ def _resolve_llm(llm: LLMSpec) -> LLMClient:
         provider, slash, model = llm.partition("/")
         if provider in ("claude-cli", "claude-code"):
             return claude_cli_llm_client(model=model or None)
+        if provider == "codex-cli":
+            return codex_cli_llm_client(model=model or None)
         if provider == "anthropic":
             return anthropic_llm_client(model) if model else anthropic_llm_client()
         if provider == "openai":
@@ -174,7 +177,8 @@ def _resolve_llm(llm: LLMSpec) -> LLMClient:
             return openai_llm_client(llm)
     raise RouterConfigurationError(
         f"Cannot resolve llm spec {llm!r}; pass a callable, 'anthropic/<model>', "
-        "'openai/<model>', a bare OpenAI model name, or 'claude-cli[/<model>]'."
+        "'openai/<model>', a bare OpenAI model name, 'codex-cli[/<model>]', "
+        "or 'claude-cli[/<model>]'."
     )
 
 
@@ -255,6 +259,8 @@ def run(
         action_registry: Ordered mapping of action key -> description; defines
             the bounded decision space enforced on the ML decision model.
         llm: Synthesizer spec or callable; resolved lazily, only on cache miss.
+            ``codex-cli[/<model>]`` and ``claude-cli[/<model>]`` use CLI
+            authentication. API clients need provider credentials.
         nlu: Runtime decision model baked into the asset (local or hosted).
         state: Artifact-store directory — the persisted "compiled flag + code".
         sample_size: Records used for schema profiling and synthesis grounding.
