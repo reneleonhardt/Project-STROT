@@ -2,10 +2,10 @@
 name = "strot-ai"
 version = "0.11.1"
 description = "STROT: compile-time LLM code synthesis with deterministic, self-routing NLU runtimes (local transformer or hosted API)"
-authors = ["Amit Rath <amitrath.ar@gmail.com>"]
+authors = ["strot-ai <lee@strot-ai.xyz>"]
 license = "MIT"
 readme = "README.md"
-repository = "https://github.com/strot-ai/Project-STROT"
+repository = "https://github.com/strot-ai/STROT-Compiler"
 keywords = ["strot", "nlu", "code-generation", "llm", "routing", "compiler"]
 classifiers = [
     "Development Status :: 3 - Alpha",
