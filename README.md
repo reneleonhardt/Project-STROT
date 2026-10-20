@@ -1,27 +1,19 @@
-<div align="center">
-
-# ⬢ STROT
-
-### The open decision compiler
-
-**Compile your intent once with an LLM. Then decide on every record forever** —
-classification, scoring, routing — as type-safe JSON with probabilities and
-confidence, on your own hardware, at **zero marginal cost**.
+# STROT
 
 [![PyPI](https://img.shields.io/pypi/v/strot-ai?color=7c3aed&label=pip%20install%20strot-ai)](https://pypi.org/project/strot-ai/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Tests](https://img.shields.io/badge/tests-106%20passing-brightgreen)](tests/)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
 
-[**Website**](https://strot.ai) · [**Docs**](DEVELOPERS.md) · [**Benchmarks**](benchmarks/) · [**PyPI**](https://pypi.org/project/strot-ai/)
+STROT compiles a decision task into a standalone pipeline. You describe the
+intent once (a query plus the set of actions it can take), an LLM compiles that
+into a frozen Python artifact, and from then on a small local model makes the
+actual decisions — on CPU, no API calls at runtime, bounded typed-JSON output.
 
-```
-Agents at compile time.  Never at runtime.
-```
-
-</div>
-
----
+I built it because getting a small local model to reliably *decide* things
+(route this ticket, classify this text, score this record) is fiddly work, and
+accuracy swings hard depending on how you phrase the labels. STROT moves that
+work to compile time and freezes the result, the way a compiler moves work off
+the hot path.
 
 ```bash
 pip install strot-ai
@@ -46,104 +38,116 @@ for o in result.outcomes:
 # technical_defect 0.94
 ```
 
-The LLM runs **once**, at compile time. Production is a frozen, self-contained
-Python artifact: a small local decision model arbitrates every record, nothing
-is generated, every output is bounded, and low-confidence records abstain
-instead of guessing.
-
-<div align="center">
-
-```
-STROT = Agentic Schema Intent + Compiler & State + Code + Execution + NLU
-                      ⟹  JSON Decisions
-          (classification · scoring · routing · typed answers)
-```
-
-</div>
+The LLM runs once, when the artifact is first compiled. After that, production
+is a self-contained Python file: a small local model arbitrates every record,
+nothing is generated at runtime, every output is bounded, and records the model
+isn't sure about abstain instead of guessing.
 
 ## How it works
 
+Two phases. The expensive, nondeterministic one happens once; the cheap one runs
+on every record forever.
+
+```mermaid
+flowchart TB
+    subgraph compile["COMPILE — once per intent + schema"]
+        direction LR
+        A["intent + data sample"] --> B["synthesize<br/>labels · projection · handlers"]
+        B --> C["golden gate<br/>(must pass your known answers)"]
+        C --> D["teacher labels a sample<br/>(once)"]
+        D --> E["fit confidence threshold"]
+        E --> F[["frozen .py artifact"]]
+    end
+    subgraph runtime["RUNTIME — every record"]
+        direction LR
+        F --> G["project record"]
+        G --> H["decision model<br/>144M · CPU · ~60ms"]
+        H --> I{"confident?"}
+        I -->|yes| J["typed JSON decision"]
+        I -->|no| K["abstain"]
+    end
+    compile --> runtime
 ```
-            COMPILE  (once per intent + schema)
-  intent + sample ─▶ synthesize ─▶ golden gate ─▶ teacher labels ─▶ calibrate
-                     (labels,      (your known      (annotate         (fit the
-                      projection,   answers must     a sample,         confidence
-                      handlers)     pass)            once)             threshold)
-                                        │
-                                        ▼
-                             frozen artifact  (.py)
 
-            RUNTIME  (every record, forever)
-  record ─▶ projection ─▶ decision model ─▶ confidence gate ─▶ typed JSON
-            (compiled)     (144M, CPU,        (decide or         decision
-                            ~60 ms)            abstain)
+The compiler doesn't trust its first guess at the labels. It scores candidate
+labelings against a teacher-labeled sample and keeps whichever one actually
+measures best, fits a calibration threshold so low-confidence records can
+abstain, and refuses to promote an artifact that fails your golden records.
+
+## Two ways to use it
+
+`run()` routes each record to an action and executes the compiled handler:
+
+```python
+result = strot.run(records, query=..., action_registry={...}, llm=...)
 ```
 
-## Two surfaces
-
-**`run()`** — route each record to an action and execute the compiled handler.
-
-**`decide()`** — answer typed questions (choice / score / boolean) per record:
+`decide()` answers typed questions per record (choice / score / boolean):
 
 ```python
 result = strot.decide(records, questions={
-    "is_bug_report":     {"type": "boolean", "instructions": "mentions crashes/errors?"},
-    "customer_sentiment":{"type": "score", "min": 1, "max": 5, "instructions": "1 angry, 5 happy"},
-    "routing_bucket":    {"type": "choice", "options": ["billing", "engineering", "spam"]},
+    "is_bug_report":      {"type": "boolean", "instructions": "mentions crashes/errors?"},
+    "customer_sentiment": {"type": "score", "min": 1, "max": 5, "instructions": "1 angry, 5 happy"},
+    "routing_bucket":     {"type": "choice", "options": ["billing", "engineering", "spam"]},
 })
-# → {"booleans": {...}, "scores": {...}, "choices": {...}}  with probabilities + confidence
+# {"booleans": {...}, "scores": {...}, "choices": {...}}  with probabilities + confidence
 ```
 
-## Measured
+## Numbers
 
-Real model (SupersonicLabs/Julia-1, 144M, CPU), real datasets, clean Docker containers:
+Real model (SupersonicLabs/Julia-1, 144M, CPU), real datasets, run in clean
+Docker containers. The benchmark scripts are in [`benchmarks/`](benchmarks/),
+losses included.
 
-| | Result |
+| Benchmark | Result |
 |---|---|
-| Grounded routing accuracy (398 records) | **92.5%** compiled vs 74.8% naive — the compiler is worth +18pp on the same model |
-| Semantic text (AG News, unseen labels) | **86.7%** compiled vs 72.7% naive (+14pp) |
-| Typed decisions vs the leading hosted decision API's own example | near-identical (sentiment 1.79 vs 1.8) |
-| Latency / marginal cost / LLM calls per record | **~60 ms · $0 · 0** |
-
-Reproduce everything: [`benchmarks/`](benchmarks/) — with the losses published too.
+| Grounded routing (398 records) | 92.5% compiled vs 74.8% naive — the compiler is worth +18pp on the same model |
+| Semantic text, unseen labels (AG News) | 86.7% compiled vs 72.7% naive (+14pp) |
+| Typed decisions vs a leading hosted decision API's own example | near-identical (sentiment 1.79 vs 1.8) |
+| Latency / marginal cost / LLM calls per record | ~60ms · $0 · 0 |
 
 ### On real risk narratives
 
-Record-level, unstructured text — the kind cyber, financial, and insurance
-triage actually runs on. Fully public, ground-truth datasets; classes balanced
-so accuracy is interpretable; baselines shown; nothing is hand-labeled and STROT
-never sees the test labels. ([`benchmarks/risk_narratives.py`](benchmarks/risk_narratives.py))
+Record-level unstructured text, the kind cyber / financial / insurance triage
+actually runs on. Public ground-truth datasets, classes balanced so accuracy is
+interpretable, baselines shown. STROT never sees the test labels.
+([`benchmarks/risk_narratives.py`](benchmarks/risk_narratives.py))
 
 | Task — 6-class, balanced | Random | Majority | Naive | Compiled | Abstains |
 |---|---|---|---|---|---|
-| **Cyber** — [VERIS/VCDB](https://github.com/vz-risk/VCDB) incident note → attack action | 16.7% | 16.7% | 36.8% | **39.5%** | 8/114 |
-| **Finance** — [CFPB](https://www.consumerfinance.gov/data-research/consumer-complaints/) complaint → product | 16.7% | 26.4% | 54.2% | **61.1%** | 5/72 |
+| Cyber — [VERIS/VCDB](https://github.com/vz-risk/VCDB) incident note → attack action | 16.7% | 16.7% | 36.8% | 39.5% | 8/114 |
+| Finance — [CFPB](https://www.consumerfinance.gov/data-research/consumer-complaints/) complaint → product | 16.7% | 26.4% | 54.2% | 61.1% | 5/72 |
 
-Both clear their baselines, the compiler lifts accuracy on the *same* 144M local
-model (+2.7pp / +6.9pp), and low-confidence records abstain instead of guessing.
-These are honest proof the architecture works on messy real narratives — not
-production underwriting accuracy. For that, drop a task-trained specialist in the
-`nlu=` slot; the compiler, calibration, and gate are unchanged.
+Both clear their baselines and the compiler lifts accuracy on the same 144M
+model, with low-confidence records abstaining. These are honest proof the
+architecture works on messy real text, not production underwriting accuracy. For
+that you'd put a task-trained specialist in the `nlu=` slot; the compiler,
+calibration, and gate don't change.
 
-## What makes it different
+## What's actually going on under the hood
 
-- **Compile once, decide forever** — content-addressed artifact cache; schema drift triggers exactly one recompile.
-- **Golden-record promotion** — artifacts must pass your known answers before they serve.
-- **Fitted guarantees** — temperature scaling + split conformal prediction, baked in: dispatched decisions are wrong ≤ α of all records (marginal); the rest abstain.
-- **Measured, not guessed** — the compiler scores labelings, and can train a distilled head, keeping only what beats the baseline on held-out data.
-- **0% structural hallucination** — output is selection + computation over your registry; nothing is generated at runtime.
-- **Model-independent** — the decision model is a slot (`nlu=`): local Julia-1 by default, hosted APIs, or any drop-in specialist.
+- Compile once, decide forever. Artifacts are content-addressed; a schema change
+  triggers exactly one recompile, nothing else does.
+- Golden records are a promotion gate, not a hint. An artifact that fails your
+  known answers never serves.
+- Calibration is temperature scaling plus split conformal prediction, fitted at
+  compile time. Dispatched decisions are wrong at most α of all records
+  (marginal); the rest abstain.
+- Nothing is generated at runtime. Output is selection and computation over your
+  registry, so there's no structural hallucination to guard against.
+- The decision model is a slot (`nlu=`): local Julia-1 by default, a hosted API,
+  or any specialist you drop in.
 
 ## Install
 
 ```bash
-pip install strot-ai            # core: pure stdlib
+pip install strot-ai            # core, pure stdlib
 pip install strot-ai[local]     # + the local decision model (torch/transformers)
 pip install strot-ai[hosted]    # + openai, for a hosted decision runtime
 pip install strot-ai[anthropic] # + anthropic, for the synthesizer
 ```
 
-Bake the local model into your image for offline production:
+For offline production, bake the model into your image at build time:
 
 ```dockerfile
 RUN pip install strot-ai[local] \
@@ -151,13 +155,17 @@ RUN pip install strot-ai[local] \
 ENV STROT_NLU_CHECKPOINT=/opt/julia-1
 ```
 
-(Never `pip install julia` — unrelated package.)
+(`julia` on PyPI is an unrelated package — don't install it. The decision
+model's inference code is pulled from its Hugging Face repo by `prefetch_nlu`.)
 
-## Documentation
+## Docs
 
-[**DEVELOPERS.md**](DEVELOPERS.md) — architecture, compile lifecycle, calibration
-semantics and caveats, deployment, model swapping, full API reference.
+[DEVELOPERS.md](DEVELOPERS.md) covers the architecture, the compile lifecycle,
+calibration semantics and their caveats, deployment, model swapping, and the
+full API.
 
 ## License
 
-MIT. Default decision model: Apache-2.0 ([SupersonicLabs/Julia-1](https://huggingface.co/SupersonicLabs/Julia-1)). Implements ideas from STROT (arXiv:2505.01636).
+MIT. The default decision model is Apache-2.0
+([SupersonicLabs/Julia-1](https://huggingface.co/SupersonicLabs/Julia-1)).
+Implements ideas from STROT (arXiv:2505.01636).
