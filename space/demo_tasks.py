@@ -25,27 +25,6 @@ TASKS = {
             "Export to CSV produces an empty file since yesterday's update.",
         ],
     },
-    "cyber": {
-        "label": "Security incident → attack action",
-        "query": "Classify each security-incident report by its primary attack action.",
-        "question": "What was the primary attack action in this incident?",
-        "registry": {
-            "hacking":  "Intrusion via technical means: stolen/brute-forced credentials, exploited vulnerabilities, SQL injection, remote access.",
-            "malware":  "Malicious software: ransomware, spyware, trojans, keyloggers, worms installed on a system.",
-            "error":    "Unintentional mistake: misdelivery, misconfiguration, lost device, accidental publishing or disposal of data.",
-            "misuse":   "Authorized insider abusing access: snooping, data theft by staff, policy violation.",
-            "physical": "Physical action: theft of a device or document, tampering, surveillance, break-in.",
-            "social":   "Social engineering of a person: phishing, pretexting, bribery, deception.",
-        },
-        "examples": [
-            "An employee emailed a spreadsheet of customer SSNs to the wrong external recipient.",
-            "Attackers deployed ransomware across the file servers and demanded payment in bitcoin.",
-            "A laptop containing patient records was stolen from a staff member's car.",
-            "Staff received a convincing email impersonating the CEO asking to wire funds.",
-            "A misconfigured S3 bucket left backup archives publicly accessible for weeks.",
-            "A contractor used their valid access to download client lists before leaving.",
-        ],
-    },
     "finance": {
         "label": "Consumer complaint → product",
         "query": "Route each consumer-finance complaint to the product it concerns.",
