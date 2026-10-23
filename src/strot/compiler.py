@@ -126,6 +126,50 @@ def codex_cli_llm_client(
     return _cli_llm_client("codex", cli, model, timeout)
 
 
+def codex_sdk_llm_client(model: Optional[str] = None, cli: Optional[str] = None) -> LLMClient:
+    """Use the Codex SDK with its bundled runtime, or a chosen CLI.
+
+    Set ``cli`` to use a specific executable path.
+    """
+    import tempfile
+
+    try:
+        from openai_codex import ApprovalMode, Codex, CodexConfig, CodexError, Sandbox
+    except ImportError as exc:
+        raise RouterConfigurationError(
+            "codex_sdk_llm_client requires the 'codex-sdk' extra: "
+            "pip install strot-ai[codex-sdk]"
+        ) from exc
+
+    def _call(prompt: str) -> str:
+        try:
+            with tempfile.TemporaryDirectory(prefix="strot-synthesis-") as cwd:
+                config = CodexConfig(
+                    codex_bin=cli, cwd=cwd, experimental_api=False,
+                    config_overrides=("project_doc_max_bytes=0", "features.shell_tool=false",
+                                      'web_search="disabled"'),
+                )
+                with Codex(config) as client:
+                    result = client.thread_start(
+                        model=model, model_provider="openai", cwd=cwd, ephemeral=True,
+                        developer_instructions="",
+                        sandbox=Sandbox.read_only, approval_mode=ApprovalMode.deny_all,
+                    ).run(prompt)
+        except CodexError:
+            raise
+        except (OSError, RuntimeError, UnicodeError) as exc:
+            raise CompilationError(f"Codex SDK synthesizer failed: {exc}", attempts=0) from exc
+        if result.status.value != "completed":
+            raise CompilationError(
+                f"Codex SDK synthesizer stopped with {result.status.value}.", attempts=0,
+            )
+        if not result.final_response or not result.final_response.strip():
+            raise CompilationError("Codex SDK synthesizer returned no text.", attempts=0)
+        return result.final_response
+
+    return _call
+
+
 def _cli_llm_client(backend: str, cli: str, model: Optional[str], timeout: float) -> LLMClient:
     import shutil
     import subprocess

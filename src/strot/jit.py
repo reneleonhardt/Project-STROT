@@ -34,6 +34,7 @@ from .compiler import (
     anthropic_llm_client,
     claude_cli_llm_client,
     codex_cli_llm_client,
+    codex_sdk_llm_client,
     openai_llm_client,
 )
 from .exceptions import RouterConfigurationError, SchemaIntrospectionError
@@ -171,6 +172,8 @@ def _resolve_llm(llm: LLMSpec) -> LLMClient:
             return claude_cli_llm_client(model=model or None)
         if provider == "codex-cli":
             return codex_cli_llm_client(model=model or None)
+        if provider == "codex-sdk":
+            return codex_sdk_llm_client(model=model or None)
         if provider == "anthropic":
             return anthropic_llm_client(model) if model else anthropic_llm_client()
         if provider == "openai":
@@ -180,7 +183,7 @@ def _resolve_llm(llm: LLMSpec) -> LLMClient:
     raise RouterConfigurationError(
         f"Cannot resolve llm spec {llm!r}; pass a callable, 'anthropic/<model>', "
         "'openai/<model>', a bare OpenAI model name, 'codex-cli[/<model>]', "
-        "or 'claude-cli[/<model>]'."
+        "'codex-sdk[/<model>]', or 'claude-cli[/<model>]'."
     )
 
 
@@ -274,6 +277,7 @@ def run(
         llm: Synthesizer spec or callable; resolved lazily, only on cache miss.
             ``codex-cli[/<model>]`` and ``claude-cli[/<model>]`` use CLI
             authentication. API clients need provider credentials.
+            ``codex-sdk[/<model>]`` uses the optional Codex Python SDK.
         nlu: Runtime decision model baked into the asset (local or hosted).
         state: Artifact-store directory — the persisted "compiled flag + code".
         sample_size: Records used for schema profiling and synthesis grounding.

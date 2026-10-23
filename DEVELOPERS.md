@@ -191,9 +191,12 @@ To add a new local engine, implement the strategy contract — `select(state, qu
 | `"anthropic/claude-opus-4-8"` | Anthropic API (`[anthropic]` extra, `ANTHROPIC_API_KEY`) |
 | `"openai/gpt-4o"` or bare model | OpenAI API (`[hosted]` extra, `OPENAI_API_KEY`) |
 | `"codex-cli"` / `"codex-cli/<model>"` | Codex CLI with saved login. Run `codex login` for subscription access. No SDK required. |
+| `"codex-sdk"` / `"codex-sdk/<model>"` | Codex Python SDK (`[codex-sdk]` extra), with saved Codex login. |
 | `"claude-cli"` / `"claude-cli/<model>"` | local Claude Code CLI as proxy (no key, no SDK) |
 
 Specs resolve **only on a cache miss** — a warm production box never needs the LLM dependency or key.
+
+Each Codex SDK synthesis call starts and closes its runtime. `openai_codex.CodexError` exceptions pass through unchanged. Empty or incomplete replies raise `CompilationError`.
 
 Both CLIs run in an isolated temporary directory and keep CLI authentication.
 Codex skips user configuration and disables project instructions, shell commands,

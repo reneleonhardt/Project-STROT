@@ -31,7 +31,8 @@ Repository = "https://github.com/strot-ai/Project-STROT"
 local = ["transformers>=5.0,<5.1", "torch>=2.6", "safetensors>=0.5", "huggingface-hub>=0.26"]
 hosted = ["openai>=1.55.3"]
 anthropic = ["anthropic>=0.80"]
-all = ["strot-ai[local,hosted,anthropic]"]
+codex-sdk = ["openai-codex>=0.163.0"]
+all = ["strot-ai[local,hosted,anthropic,codex-sdk]"]
 
 [tool.poetry]
 packages = [{ include = "strot", from = "src" }]

@@ -167,6 +167,7 @@ pip install strot-ai             # core: pure stdlib
 pip install "strot-ai[local]"     # + local model dependencies (torch/transformers)
 pip install "strot-ai[hosted]"    # + openai, for API synthesis or runtime routing
 pip install "strot-ai[anthropic]" # + anthropic, for Anthropic API synthesis
+pip install "strot-ai[codex-sdk]" # + Codex Python SDK and its bundled runtime
 ```
 
 Extras install optional Python packages. They do not select a provider or sign you in.
@@ -176,6 +177,10 @@ For OpenAI API synthesis, install `[hosted]`, set `OPENAI_API_KEY`, and pass
 Subscription CLI synthesis needs the CLI and its subscription login. It needs
 neither the `[hosted]` nor the `[anthropic]` extra. Check which login the CLI uses.
 Other credentials can override a saved subscription login.
+
+For Codex SDK synthesis, install `[codex-sdk]` and pass
+`llm="codex-sdk/gpt-6-luna"`. It reuses your Codex login.
+See [client configuration](DEVELOPERS.md#llm-clients).
 
 Bake the local model into your image for offline production:
 
