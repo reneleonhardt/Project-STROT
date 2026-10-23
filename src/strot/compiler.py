@@ -127,11 +127,13 @@ def codex_cli_llm_client(
 
 
 def codex_sdk_llm_client(model: Optional[str] = None, cli: Optional[str] = None) -> LLMClient:
-    """Use the Codex SDK with its bundled runtime, or a chosen CLI.
+    """Use the Codex SDK with an installed CLI, or its bundled runtime.
 
-    Set ``cli`` to use a specific executable path.
+    Automatic selection checks publisher identity and version. Set ``cli`` to
+    trust a specific executable name or path instead.
     """
     import tempfile
+    from ._codex import find_cli
 
     try:
         from openai_codex import ApprovalMode, Codex, CodexConfig, CodexError, Sandbox
@@ -141,11 +143,13 @@ def codex_sdk_llm_client(model: Optional[str] = None, cli: Optional[str] = None)
             "pip install strot-ai[codex-sdk]"
         ) from exc
 
+    cli_path = find_cli(cli) if cli is not None else None
+
     def _call(prompt: str) -> str:
         try:
             with tempfile.TemporaryDirectory(prefix="strot-synthesis-") as cwd:
                 config = CodexConfig(
-                    codex_bin=cli, cwd=cwd, experimental_api=False,
+                    codex_bin=cli_path or find_cli(), cwd=cwd, experimental_api=False,
                     config_overrides=("project_doc_max_bytes=0", "features.shell_tool=false",
                                       'web_search="disabled"'),
                 )

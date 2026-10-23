@@ -196,6 +196,8 @@ To add a new local engine, implement the strategy contract — `select(state, qu
 
 Specs resolve **only on a cache miss** — a warm production box never needs the LLM dependency or key.
 
+For SDK calls, STROT selects the newest verified CLI from `PATH`, standard locations, or desktop apps. If none meets the SDK's pinned minimum version, STROT uses the bundle. Verification uses OpenAI signatures on macOS/Windows and online release hashes on Linux. Explicit `cli=` skips verification. Without the bundle, a compatible CLI is required. Dependency checks still report the bundle as missing.
+
 Each Codex SDK synthesis call starts and closes its runtime. `openai_codex.CodexError` exceptions pass through unchanged. Empty or incomplete replies raise `CompilationError`.
 
 Both CLIs run in an isolated temporary directory and keep CLI authentication.

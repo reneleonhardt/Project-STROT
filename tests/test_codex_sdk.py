@@ -6,12 +6,14 @@ from unittest.mock import MagicMock, Mock
 import pytest
 
 import strot
+from strot._codex import find_cli
 from strot.exceptions import CompilationError, RouterConfigurationError
 from test_compiler import REGISTRY, SAMPLE, VALID_PATHS
 
 
 @pytest.fixture
 def sdk(monkeypatch):
+    monkeypatch.setattr("strot._codex.find_cli", lambda cli=None: cli)
     class CodexError(Exception):
         pass
 
@@ -65,6 +67,7 @@ def test_runtime_accepts_sdk_configuration(monkeypatch, tmp_path, installed):
     from codex_cli_bin import bundled_codex_path
 
     codex_bin = str(bundled_codex_path()) if installed else None
+    monkeypatch.setattr("strot._codex.find_cli", lambda cli=None: codex_bin)
     config_type = sdk.CodexConfig
 
     def isolated_config(**kwargs):
@@ -80,13 +83,17 @@ def test_runtime_accepts_sdk_configuration(monkeypatch, tmp_path, installed):
     # Start the real runtime and thread, but replace generation before any model call.
     monkeypatch.setattr(sdk.Thread, "run", lambda _, prompt: SimpleNamespace(
         status=SimpleNamespace(value="completed"), final_response=prompt))
-    assert strot.codex_sdk_llm_client("gpt-6-luna", cli=codex_bin)("compiled code") == "compiled code"
+    assert strot.codex_sdk_llm_client("gpt-6-luna")("compiled code") == "compiled code"
 
 
-def test_sdk_passes_explicit_cli_to_runtime(sdk):
-    _, factory, _, _ = sdk
-    strot.codex_sdk_llm_client(cli="/custom/codex")("compile this")
-    assert factory.call_args.args[0].codex_bin == "/custom/codex"
+def test_explicit_relative_cli_survives_directory_change(sdk, monkeypatch, tmp_path):
+    monkeypatch.setattr("strot._codex.find_cli", find_cli)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr("shutil.which", lambda name: "./codex" if name == "./codex" else None)
+    client = strot.codex_sdk_llm_client(cli="./codex")
+    monkeypatch.chdir(tmp_path.parent)
+    assert client("compile") == VALID_PATHS
+    assert sdk[1].call_args.args[0].codex_bin == str(tmp_path / "codex")
 
 
 @pytest.mark.parametrize("failure", ["startup", "thread", "run", "encoding", "interrupted", "none", "empty"])

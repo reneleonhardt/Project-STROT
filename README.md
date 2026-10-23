@@ -179,8 +179,19 @@ neither the `[hosted]` nor the `[anthropic]` extra. Check which login the CLI us
 Other credentials can override a saved subscription login.
 
 For Codex SDK synthesis, install `[codex-sdk]` and pass
-`llm="codex-sdk/gpt-6-luna"`. It reuses your Codex login.
-See [client configuration](DEVELOPERS.md#llm-clients).
+`llm="codex-sdk/gpt-6-luna"`. It reuses your Codex login and prefers a verified installed CLI.
+With uv, run in a virtual environment:
+
+```bash
+uv pip install "strot-ai[codex-sdk]"  # With the bundled CLI
+
+# Or reuse codex CLI from PATH or bundled in the ChatGPT desktop app:
+printf 'openai-codex-cli-bin\n' |
+  uv pip install --excludes - "strot-ai[codex-sdk]"
+```
+
+Repeat the exclusion for upgrades. See [client configuration](DEVELOPERS.md#llm-clients)
+for CLI selection.
 
 Bake the local model into your image for offline production:
 
