@@ -164,6 +164,13 @@ model's inference code is pulled from its Hugging Face repo by `prefetch_nlu`.)
 calibration semantics and their caveats, deployment, model swapping, and the
 full API.
 
+## Contributing & contact
+
+Contributions are welcome — keep pull requests focused on one change, branch off
+the latest `main`, and run the test suite first. See [CONTRIBUTING.md](CONTRIBUTING.md).
+
+Questions, ideas, or problems: open an issue or email **lee@strot-ai.xyz**.
+
 ## License
 
 MIT. The default decision model is Apache-2.0
