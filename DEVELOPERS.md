@@ -241,3 +241,6 @@ The artifact cache key hashes: package version, query/config, registry, decision
 - Schema **drift** (new/removed/retyped fields) busts the key automatically; value changes don't.
 - Package upgrades bust all caches on purpose (templates may have changed).
 - Artifacts are content-addressed: name artifacts by key, keep the previous one for rollback, and alert on unexpected recompiles in prod.
+
+Loaded modules are keyed by the full cache key and canonical artifact path.
+File metadata changes trigger a reload. Concurrent loads share a completed module.

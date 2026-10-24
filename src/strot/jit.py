@@ -22,6 +22,7 @@ import hashlib
 import importlib.util
 import json
 import sys
+from threading import RLock
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
@@ -44,6 +45,7 @@ from .schema import DatasetSchema, introspect_schema
 LLMSpec = Union[str, LLMClient]
 
 _KEY_PREFIX_LEN = 16
+_ARTIFACT_LOCK = RLock()
 
 
 @dataclass
@@ -189,28 +191,33 @@ def _artifact_paths(state: Union[str, Path], key: str) -> "tuple[Path, Path]":
 
 
 def _artifact_module_name(path: Path, key: str) -> str:
-    location = hashlib.sha256(str(path.absolute()).encode("utf-8")).hexdigest()[:16]
+    location = hashlib.sha256(str(path.resolve()).encode("utf-8")).hexdigest()[:16]
     return f"strot_compiled_{key}_{location}"
 
 
 def _load_artifact(path: Path, key: str) -> Any:
-    module_name = _artifact_module_name(path, key)
-    if module_name in sys.modules:
-        return sys.modules[module_name]
-    spec = importlib.util.spec_from_file_location(module_name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[module_name] = module
-    try:
-        # Read source directly so a fast recompile cannot reuse stale bytecode.
-        exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
-    except Exception as exc:
-        del sys.modules[module_name]
-        raise RouterConfigurationError(
-            f"Compiled artifact {path} failed to load: {exc}. The local runtime "
-            "needs strot-ai[local] (torch/transformers); the hosted runtime "
-            "needs strot-ai[hosted] (openai)."
-        ) from exc
-    return module
+    with _ARTIFACT_LOCK:
+        module_name = _artifact_module_name(path, key)
+        try:
+            stat = path.stat()
+            stamp = (stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size, stat.st_ino)
+            cached = sys.modules.get(module_name)
+            if cached is not None and getattr(cached, "__strot_source_stamp__", None) == stamp:
+                return cached
+            spec = importlib.util.spec_from_file_location(module_name, path)
+            module = importlib.util.module_from_spec(spec)
+            sys.modules[module_name] = module
+            # Read source directly so a fast recompile cannot reuse stale bytecode.
+            exec(compile(path.read_bytes(), str(path), "exec"), module.__dict__)
+        except Exception as exc:
+            sys.modules.pop(module_name, None)
+            raise RouterConfigurationError(
+                f"Compiled artifact {path} failed to load: {exc}. The local runtime "
+                "needs strot-ai[local] (torch/transformers); the hosted runtime "
+                "needs strot-ai[hosted] (openai)."
+            ) from exc
+        module.__strot_source_stamp__ = stamp
+        return module
 
 
 def _log_episode(state: Union[str, Path], payload: Dict[str, Any]) -> None:
@@ -368,8 +375,9 @@ def run(
         })
         attempts = asset.attempts
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        asset.save(artifact_path)
-        sys.modules.pop(_artifact_module_name(artifact_path, key), None)
+        with _ARTIFACT_LOCK:
+            asset.save(artifact_path)
+            sys.modules.pop(_artifact_module_name(artifact_path, key), None)
         meta_path.write_text(
             json.dumps(
                 {
@@ -499,8 +507,9 @@ def decide(
         })
         attempts = asset.attempts
         artifact_path.parent.mkdir(parents=True, exist_ok=True)
-        asset.save(artifact_path)
-        sys.modules.pop(_artifact_module_name(artifact_path, key), None)
+        with _ARTIFACT_LOCK:
+            asset.save(artifact_path)
+            sys.modules.pop(_artifact_module_name(artifact_path, key), None)
         meta_path.write_text(
             json.dumps(
                 {

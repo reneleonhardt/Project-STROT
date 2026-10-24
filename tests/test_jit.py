@@ -236,6 +236,48 @@ class TestCacheKey:
 
 
 class TestRun:
+    @pytest.mark.parametrize("alias", [False, True])
+    def test_cache_refreshes_replaced_source_through_path_alias(self, tmp_path, alias):
+        import os
+
+        path = tmp_path / "asset.py"
+        path.write_text("value = 'first'\n")
+        first = _load_artifact(path, "replaced")
+        alias = tmp_path / "directory" / ".." / "asset.py" if alias else path
+        (tmp_path / "directory").mkdir()
+        assert _load_artifact(alias, "replaced") is first
+        replacement = tmp_path / "replacement.py"
+        replacement.write_text("value = 'other'\n")
+        stat = path.stat()
+        os.utime(replacement, ns=(stat.st_atime_ns, stat.st_mtime_ns))
+        replacement.replace(path)
+        assert _load_artifact(alias, "replaced").value == "other"
+        assert _load_artifact(path, "replaced").value == "other"
+
+    def test_parallel_loads_wait_for_complete_module(self, monkeypatch, tmp_path):
+        import builtins
+        from concurrent.futures import ThreadPoolExecutor, TimeoutError
+        from threading import Event
+
+        started, release = Event(), Event()
+        def pause():
+            started.set()
+            assert release.wait(5)
+        monkeypatch.setattr(builtins, "_strot_pause", pause, raising=False)
+        path = tmp_path / "asset.py"
+        path.write_text("import builtins\nbuiltins._strot_pause()\nvalue = 1\n")
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(_load_artifact, path, "parallel")
+            assert started.wait(5)
+            second = pool.submit(_load_artifact, path, "parallel")
+            try:
+                with pytest.raises(TimeoutError):
+                    second.result(timeout=0.05)
+            finally:
+                release.set()
+            assert first.result(timeout=5) is second.result(timeout=5)
+            assert first.result().value == 1
+
     def test_failed_load_does_not_poison_cache(self, tmp_path):
         path = tmp_path / "asset.py"
         path.write_text("invalid syntax here\n")
