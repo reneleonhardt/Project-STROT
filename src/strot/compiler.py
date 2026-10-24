@@ -106,7 +106,8 @@ def claude_cli_llm_client(
     """Use Claude Code for synthesis.
 
     Requires ``--safe-mode`` support. This skips user customizations and
-    keeps subscription access. No SDK is required.
+    keeps CLI authentication. Built-in tools and session persistence are
+    disabled. No SDK is required.
     """
     return _cli_llm_client("claude", cli, model, timeout)
 
@@ -120,6 +121,7 @@ def codex_cli_llm_client(
 
     Run ``codex login`` for ChatGPT subscription access. The CLI must support
     ``--ignore-user-config`` and ``--ephemeral``. No SDK is required.
+    Shell commands, web search, and project instructions are disabled.
     """
     return _cli_llm_client("codex", cli, model, timeout)
 
@@ -143,6 +145,8 @@ def _cli_llm_client(backend: str, cli: str, model: Optional[str], timeout: float
             if backend == "codex":
                 command = [
                     cli_path, "exec", "--ignore-user-config", "--ephemeral",
+                    "-c", "project_doc_max_bytes=0", "-c", "features.shell_tool=false",
+                    "-c", 'web_search="disabled"',
                     "--sandbox", "read-only", "--skip-git-repo-check",
                     "--color", "never", "--output-last-message", str(output),
                 ]
@@ -165,7 +169,7 @@ def _cli_llm_client(backend: str, cli: str, model: Optional[str], timeout: float
                         f"{detail}", attempts=0,
                     )
                 response = output.read_text(encoding="utf-8") if backend == "codex" else proc.stdout
-            except (OSError, subprocess.TimeoutExpired) as exc:
+            except (OSError, UnicodeError, subprocess.TimeoutExpired) as exc:
                 raise CompilationError(
                     f"{backend} CLI synthesizer failed: {exc}", attempts=0,
                 ) from exc

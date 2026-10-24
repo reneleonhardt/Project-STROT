@@ -38,16 +38,21 @@ def test_codex_process_repairs_and_reuses_cache(monkeypatch, tmp_path):
     assert len(log.read_text().splitlines()) == 2
 
 
-def test_relative_codex_path(monkeypatch, tmp_path):
+@pytest.mark.parametrize("backend", ["codex", "claude"])
+def test_relative_cli_path(backend, monkeypatch, tmp_path):
     monkeypatch.chdir(tmp_path)
-    cli = tmp_path / "codex"
+    cli = tmp_path / backend
     cli.write_text(
         f"#!{sys.executable}\n"
         "import sys\nfrom pathlib import Path\n"
-        "Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('ready')\n"
+        "if '--output-last-message' in sys.argv:\n"
+        "    Path(sys.argv[sys.argv.index('--output-last-message') + 1]).write_text('ready')\n"
+        "else:\n"
+        "    print('ready', end='')\n"
     )
     cli.chmod(0o755)
-    assert strot.codex_cli_llm_client(cli="./codex")("prompt") == "ready"
+    client = getattr(strot, backend + "_cli_llm_client")(cli="./" + backend)
+    assert client("prompt") == "ready"
 
 
 @pytest.mark.parametrize("spec", ["codex-cli", "codex-cli/gpt-6-luna", "claude-cli", "claude-cli/claude-opus-4-8"])
@@ -65,10 +70,14 @@ def test_cli_synthesis_and_cache(spec, monkeypatch, tmp_path):
         assert Path(kwargs["cwd"]).is_dir()
         if "--output-last-message" in command:
             assert "--sandbox" in command and "read-only" in command
+            assert [command[i + 1] for i, value in enumerate(command) if value == "-c"] == [
+                "project_doc_max_bytes=0", "features.shell_tool=false", 'web_search="disabled"',
+            ]
             Path(command[command.index("--output-last-message") + 1]).write_text(VALID_PATHS)
         else:
             assert "--safe-mode" in command
             assert command[command.index("--tools") + 1] == ""
+            assert "--no-session-persistence" in command
         if "/" in spec:
             assert command[-2:] == ["--model", spec.split("/", 1)[1]]
         else:
@@ -93,7 +102,7 @@ def test_missing_cli(backend, monkeypatch):
 
 
 @pytest.mark.parametrize("backend", ["codex", "claude"])
-@pytest.mark.parametrize("failure", ["exit", "timeout", "oserror", "empty", "missing-output"])
+@pytest.mark.parametrize("failure", ["exit", "timeout", "oserror", "empty", "missing-output", "encoding"])
 def test_cli_failures(backend, failure, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda cli: "/bin/" + cli)
 
@@ -102,6 +111,8 @@ def test_cli_failures(backend, failure, monkeypatch):
             raise subprocess.TimeoutExpired(command, kwargs["timeout"])
         if failure == "oserror":
             raise OSError("cannot start")
+        if failure == "encoding":
+            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid byte")
         if backend == "codex" and failure != "missing-output":
             Path(command[command.index("--output-last-message") + 1]).write_text("")
         return SimpleNamespace(returncode=1 if failure == "exit" else 0,
@@ -111,6 +122,8 @@ def test_cli_failures(backend, failure, monkeypatch):
     monkeypatch.setattr(subprocess, "run", invoke)
     with pytest.raises(CompilationError) as error:
         _resolve_llm(backend + "-cli")("prompt")
+    if failure == "encoding":
+        assert isinstance(error.value.__cause__, UnicodeDecodeError)
     if failure == "exit":
         assert "login required" in str(error.value)
 

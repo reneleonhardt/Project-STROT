@@ -48,6 +48,9 @@ To compile with a subscription CLI, use
 Sign in through `claude` or `codex login` first. Omit `/<model>` to use the
 CLI default. Model access and usage limits depend on your account.
 The CLI only runs at compile time. See [the example](examples/end_to_end.py).
+For a CLI outside PATH, pass a client such as
+`llm=strot.codex_cli_llm_client(cli="/path/to/codex", model="gpt-6-luna")`.
+For Claude, use `llm=strot.claude_cli_llm_client(cli="/path/to/claude")`.
 
 ## How it works
 

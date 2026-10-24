@@ -195,6 +195,13 @@ To add a new local engine, implement the strategy contract — `select(state, qu
 
 Specs resolve **only on a cache miss** — a warm production box never needs the LLM dependency or key.
 
+Both CLIs run in an isolated temporary directory and keep CLI authentication.
+Codex skips user configuration and disables project instructions, shell commands,
+and web search. Claude uses `--safe-mode` to skip customizations and disables
+built-in tools and session persistence. See the
+[Codex configuration reference](https://developers.openai.com/codex/config-reference)
+and [Claude CLI reference](https://code.claude.com/docs/en/cli-reference).
+
 ## Episode log
 
 Every compile appends one JSON line to `<state>/episodes.jsonl`:

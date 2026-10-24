@@ -25,6 +25,7 @@ Omit /<model> to use the CLI default. Check which login the CLI uses.
 Other credentials can override a saved subscription login.
 Your account controls model access and usage limits. Codex must support
 --ignore-user-config and --ephemeral. Claude must support --safe-mode.
+Codex shell commands and web search are disabled during synthesis.
 
 Without --llm, the example uses the offline stub. Use a separate --state
 directory to compare LLMs. Changing --llm alone does not clear the saved code.
