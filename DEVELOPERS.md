@@ -202,9 +202,11 @@ Each Codex SDK synthesis call starts and closes its runtime. `openai_codex.Codex
 
 All factories accept the callbacks below. Client calls return text. Unsupported callbacks are ignored. Callbacks run on the caller's thread and must return promptly. Errors pass through unchanged. Result fields vary by provider.
 
+Call `handle.interrupt()` from `on_turn` to request cancellation. Cancelled turns raise `CompilationError` without a compiler retry.
+
 | Client | `on_result` | `on_event` | `on_turn` |
 |---|---|---|---|
-| Codex SDK | Native result, usage, duration | Unused | Unused |
+| Codex SDK | Native result, usage, duration | Unused | Active turn handle |
 | OpenAI / Anthropic API | Native API response | Unused | Unused |
 | Raw CLIs | Unused | Unused | Unused |
 

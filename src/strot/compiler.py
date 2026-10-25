@@ -165,6 +165,16 @@ def codex_sdk_llm_client(
     cli_path = find_cli(cli) if cli is not None else None
 
     def _call(prompt: str) -> str:
+        hook_error = None
+
+        def notify(hook: LLMHook, value: Any) -> None:
+            nonlocal hook_error
+            try:
+                hook(value)
+            except Exception as exc:
+                hook_error = exc
+                raise
+
         try:
             with tempfile.TemporaryDirectory(prefix="strot-synthesis-") as cwd:
                 config = CodexConfig(
@@ -173,14 +183,22 @@ def codex_sdk_llm_client(
                                       'web_search="disabled"'),
                 )
                 with Codex(config) as client:
-                    result = client.thread_start(
+                    thread = client.thread_start(
                         model=model, model_provider="openai", cwd=cwd, ephemeral=True,
                         developer_instructions="",
                         sandbox=Sandbox.read_only, approval_mode=ApprovalMode.deny_all,
-                    ).run(prompt)
+                    )
+                    if on_turn is None:
+                        result = thread.run(prompt)
+                    else:
+                        turn = thread.turn(prompt)
+                        notify(on_turn, turn)
+                        result = turn.run()
         except CodexError:
             raise
         except (OSError, RuntimeError, UnicodeError) as exc:
+            if exc is hook_error:
+                raise
             raise CompilationError(f"Codex SDK synthesizer failed: {exc}", attempts=0) from exc
         if on_result is not None:
             on_result(result)

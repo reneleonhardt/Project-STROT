@@ -75,6 +75,30 @@ def test_result_hook_preserves_metadata_and_callback_errors(sdk):
     assert client.__exit__.call_count == 2
 
 
+@pytest.mark.parametrize("entry", ["run", "decide"])
+def test_turn_hook_can_cancel_without_compiler_retry(sdk, tmp_path, entry):
+    client, factory, result, _ = sdk
+    turn = client.thread_start.return_value.turn.return_value
+    turn.run.return_value = result
+    turn.interrupt.side_effect = lambda: setattr(result.status, "value", "interrupted")
+    llm = strot.codex_sdk_llm_client(on_turn=lambda handle: handle.interrupt())
+    args = (SAMPLE, "triage", REGISTRY) if entry == "run" else (
+        SAMPLE, {"is_bug": {"type": "boolean", "instructions": "Bug report?"}})
+    with pytest.raises(CompilationError, match="interrupted"):
+        getattr(strot, entry)(*args, llm=llm, state=tmp_path, execute=False)
+    turn.interrupt.assert_called_once()
+    factory.assert_called_once()
+    client.__exit__.assert_called_once()
+
+
+def test_turn_hook_error_is_not_wrapped(sdk):
+    error = OSError("observer failed")
+    with pytest.raises(OSError) as caught:
+        strot.codex_sdk_llm_client(on_turn=Mock(side_effect=error))("compile")
+    assert caught.value is error
+    sdk[0].__exit__.assert_called_once()
+
+
 @pytest.mark.parametrize("installed", [False, True])
 def test_runtime_accepts_sdk_configuration(monkeypatch, tmp_path, installed):
     sdk = pytest.importorskip("openai_codex")
