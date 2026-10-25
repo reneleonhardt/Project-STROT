@@ -1,0 +1,29 @@
+{
+  "cache_key": "e367779d41a658b1b33df02c211c3019e35933b6fb8401190b9bad9bdaa0c1b8",
+  "query": "Triage incoming support tickets into the correct workflow.",
+  "nlu": "SupersonicLabs/Julia-1",
+  "runtime_kind": "local",
+  "attempts": 1,
+  "action_registry": {
+    "billing_dispute": "Refunds, invoice corrections, double charges, billing questions.",
+    "technical_defect": "Crashes, bugs, errors, broken or unexpected behavior.",
+    "account_access": "Login problems, password resets, locked or suspended accounts."
+  },
+  "schema": [
+    [
+      "text",
+      "text",
+      "str"
+    ]
+  ],
+  "calibration": null,
+  "label_search": {
+    "scores": {
+      "synthesized": 1.0,
+      "registry_keys": 1.0
+    },
+    "winner": "synthesized"
+  },
+  "model_search": null,
+  "policy": null
+}

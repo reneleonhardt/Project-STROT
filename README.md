@@ -1,8 +1,18 @@
 # STROT
 
+### The open decision system
+
+**Compile System 2 reasoning into System 1 decisions — $0 at inference.**
+
+**LOW LATENCY · ULTRAFAST · CHEAP & FREE · 0 TOKENS · LOW CARBON · CPU INFERENCE ONLY**
+
 [![PyPI](https://img.shields.io/pypi/v/strot-ai?color=7c3aed&label=pip%20install%20strot-ai)](https://pypi.org/project/strot-ai/)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Python](https://img.shields.io/badge/python-3.9%2B-blue)](pyproject.toml)
+
+An LLM reasons through your task once, at compile time. Every decision after runs
+on a small local model on **CPU** — no API calls, no GPU, no per-record cost:
+**faster, cheaper, and a fraction of the energy** of calling an LLM on every record.
 
 STROT compiles a decision task into a standalone pipeline. You describe the
 intent once (a query plus the set of actions it can take), an LLM compiles that

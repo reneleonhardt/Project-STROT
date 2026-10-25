@@ -1,0 +1,32 @@
+{
+  "cache_key": "44bf248add9cb15d9ee4afd47622dcf4277cc7beabe3b2ce558e8be4dcc305ae",
+  "query": "Route each consumer-finance complaint to the product it concerns.",
+  "nlu": "SupersonicLabs/Julia-1",
+  "runtime_kind": "local",
+  "attempts": 1,
+  "action_registry": {
+    "credit_reporting": "A dispute about a credit report, credit score, or a credit bureau: wrong info, inquiries, identity theft on the report.",
+    "debt_collection": "A complaint about a debt collector: collection calls, a debt not owed, harassment, validation of a debt.",
+    "credit_card": "A complaint about a credit card: fees, interest, rewards, billing disputes, closed accounts.",
+    "bank_account": "A complaint about a checking/savings account: deposits, overdrafts, holds, closures, fraud on the account.",
+    "mortgage": "A complaint about a mortgage or home loan: servicing, escrow, modification, foreclosure, payments.",
+    "money_transfer": "A complaint about a money transfer, wire, remittance, or digital wallet."
+  },
+  "schema": [
+    [
+      "text",
+      "text",
+      "str"
+    ]
+  ],
+  "calibration": null,
+  "label_search": {
+    "scores": {
+      "synthesized": 1.0,
+      "registry_keys": 0.8333
+    },
+    "winner": "synthesized"
+  },
+  "model_search": null,
+  "policy": null
+}
