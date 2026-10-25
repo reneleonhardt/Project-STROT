@@ -61,6 +61,20 @@ def test_missing_sdk_names_the_extra(monkeypatch):
         strot.codex_sdk_llm_client()
 
 
+def test_result_hook_preserves_metadata_and_callback_errors(sdk):
+    client, _, result, _ = sdk
+    result.usage, result.duration_ms = {"tokens": 42}, 125
+    seen = []
+    assert strot.codex_sdk_llm_client(on_result=seen.append)("compile") == VALID_PATHS
+    assert seen == [result] and seen[0].duration_ms == 125
+    failure = RuntimeError("observer failed")
+    hook = Mock(side_effect=failure)
+    with pytest.raises(RuntimeError) as caught:
+        strot.codex_sdk_llm_client(on_result=hook)("compile")
+    assert caught.value is failure
+    assert client.__exit__.call_count == 2
+
+
 @pytest.mark.parametrize("installed", [False, True])
 def test_runtime_accepts_sdk_configuration(monkeypatch, tmp_path, installed):
     sdk = pytest.importorskip("openai_codex")

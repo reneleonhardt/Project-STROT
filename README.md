@@ -191,7 +191,7 @@ printf 'openai-codex-cli-bin\n' |
 ```
 
 Repeat the exclusion for upgrades. See [client configuration](DEVELOPERS.md#llm-clients)
-for CLI selection.
+for CLI selection and callbacks.
 
 Bake the local model into your image for offline production:
 

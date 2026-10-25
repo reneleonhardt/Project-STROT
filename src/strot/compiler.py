@@ -37,11 +37,16 @@ from .schema import DatasetSchema, introspect_schema
 
 #: A generative LLM client is any callable mapping a prompt to raw model text.
 LLMClient = Callable[[str], str]
+LLMHook = Callable[[Any], None]
 
 _CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 
 
-def openai_llm_client(model: str = "gpt-4o", temperature: float = 0.0) -> LLMClient:
+def openai_llm_client(
+    model: str = "gpt-4o", temperature: float = 0.0, *,
+    on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
+    on_turn: Optional[LLMHook] = None,
+) -> LLMClient:
     """Convenience factory: a synthesizer client backed by the OpenAI API."""
     try:
         from openai import OpenAI
@@ -58,6 +63,8 @@ def openai_llm_client(model: str = "gpt-4o", temperature: float = 0.0) -> LLMCli
             temperature=temperature,
             messages=[{"role": "user", "content": prompt}],
         )
+        if on_result is not None:
+            on_result(response)
         return response.choices[0].message.content or ""
 
     return _call
@@ -66,6 +73,8 @@ def openai_llm_client(model: str = "gpt-4o", temperature: float = 0.0) -> LLMCli
 def anthropic_llm_client(
     model: str = "claude-opus-4-8",
     max_tokens: int = 16000,
+    *, on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
+    on_turn: Optional[LLMHook] = None,
 ) -> LLMClient:
     """Convenience factory: a synthesizer client backed by the Anthropic API.
 
@@ -87,6 +96,8 @@ def anthropic_llm_client(
             max_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
+        if on_result is not None:
+            on_result(response)
         if response.stop_reason == "refusal":
             raise CompilationError(
                 "Anthropic synthesizer refused the request.", attempts=0
@@ -102,6 +113,8 @@ def claude_cli_llm_client(
     model: Optional[str] = None,
     cli: str = "claude",
     timeout: float = 600.0,
+    *, on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
+    on_turn: Optional[LLMHook] = None,
 ) -> LLMClient:
     """Use Claude Code for synthesis.
 
@@ -116,6 +129,8 @@ def codex_cli_llm_client(
     model: Optional[str] = None,
     cli: str = "codex",
     timeout: float = 600.0,
+    *, on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
+    on_turn: Optional[LLMHook] = None,
 ) -> LLMClient:
     """Use ``codex exec`` for synthesis.
 
@@ -126,7 +141,11 @@ def codex_cli_llm_client(
     return _cli_llm_client("codex", cli, model, timeout)
 
 
-def codex_sdk_llm_client(model: Optional[str] = None, cli: Optional[str] = None) -> LLMClient:
+def codex_sdk_llm_client(
+    model: Optional[str] = None, cli: Optional[str] = None, *,
+    on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
+    on_turn: Optional[LLMHook] = None,
+) -> LLMClient:
     """Use the Codex SDK with an installed CLI, or its bundled runtime.
 
     Automatic selection checks publisher identity and version. Set ``cli`` to
@@ -163,6 +182,8 @@ def codex_sdk_llm_client(model: Optional[str] = None, cli: Optional[str] = None)
             raise
         except (OSError, RuntimeError, UnicodeError) as exc:
             raise CompilationError(f"Codex SDK synthesizer failed: {exc}", attempts=0) from exc
+        if on_result is not None:
+            on_result(result)
         if result.status.value != "completed":
             raise CompilationError(
                 f"Codex SDK synthesizer stopped with {result.status.value}.", attempts=0,

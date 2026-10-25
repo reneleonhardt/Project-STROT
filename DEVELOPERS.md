@@ -200,6 +200,14 @@ For SDK calls, STROT selects the newest verified CLI from `PATH`, standard locat
 
 Each Codex SDK synthesis call starts and closes its runtime. `openai_codex.CodexError` exceptions pass through unchanged. Empty or incomplete replies raise `CompilationError`.
 
+All factories accept the callbacks below. Client calls return text. Unsupported callbacks are ignored. Callbacks run on the caller's thread and must return promptly. Errors pass through unchanged. Result fields vary by provider.
+
+| Client | `on_result` | `on_event` | `on_turn` |
+|---|---|---|---|
+| Codex SDK | Native result, usage, duration | Unused | Unused |
+| OpenAI / Anthropic API | Native API response | Unused | Unused |
+| Raw CLIs | Unused | Unused | Unused |
+
 Both CLIs run in an isolated temporary directory and keep CLI authentication.
 Codex skips user configuration and disables project instructions, shell commands,
 and web search. Claude uses `--safe-mode` to skip customizations and disables

@@ -51,7 +51,9 @@ def test_relative_cli_path(backend, monkeypatch, tmp_path):
         "    print('ready', end='')\n"
     )
     cli.chmod(0o755)
-    client = getattr(strot, backend + "_cli_llm_client")(cli="./" + backend)
+    unsupported = lambda _: pytest.fail("Unsupported hook called")
+    client = getattr(strot, backend + "_cli_llm_client")(
+        cli="./" + backend, on_result=unsupported, on_event=unsupported, on_turn=unsupported)
     assert client("prompt") == "ready"
 
 

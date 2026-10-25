@@ -2,16 +2,39 @@ import ast
 import json
 import sys
 import types
+from unittest.mock import Mock
 
 import pytest
 
-from strot.compiler import StrotCompiler, handler_name
+from strot.compiler import StrotCompiler, handler_name, openai_llm_client, anthropic_llm_client
 from strot.exceptions import CompilationError, FallbackException
 
 SAMPLE = [
     {"ticket_id": 1, "body": "double charged", "tier": "pro"},
     {"ticket_id": 2, "body": "app crashes", "tier": "free"},
 ]
+
+
+@pytest.mark.parametrize("provider,factory,name", [
+    ("openai", openai_llm_client, "OpenAI"),
+    ("anthropic", anthropic_llm_client, "Anthropic"),
+])
+def test_native_api_result_hooks(monkeypatch, provider, factory, name):
+    response = types.SimpleNamespace(
+        choices=[types.SimpleNamespace(message=types.SimpleNamespace(content="code"))],
+        content=[types.SimpleNamespace(type="text", text="code")], stop_reason="end_turn")
+    module, client = Mock(), Mock()
+    getattr(module, name).return_value = client
+    client.chat.completions.create.return_value = client.messages.create.return_value = response
+    monkeypatch.setitem(sys.modules, provider, module)
+    seen = []
+    unsupported = lambda _: pytest.fail("Unsupported hook called")
+    assert factory(on_result=seen.append, on_event=unsupported, on_turn=unsupported)("prompt") == "code"
+    assert seen == [response]
+    error = OSError("observer failed")
+    with pytest.raises(OSError) as caught:
+        factory(on_result=Mock(side_effect=error))("prompt")
+    assert caught.value is error
 
 REGISTRY = {
     "billing": "Billing disputes and refunds",
