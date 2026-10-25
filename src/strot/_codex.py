@@ -1,4 +1,4 @@
-"""Conservative selection of an independently installed Codex SDK runtime."""
+"""Codex runtime verification and typed progress collection."""
 
 import base64
 import hashlib
@@ -14,6 +14,48 @@ import sys
 from urllib.request import urlopen
 
 from .exceptions import RouterConfigurationError
+
+
+def collect_turn(turn, on_event):
+    from contextlib import closing
+
+    from openai_codex import TurnResult
+    from openai_codex.generated.v2_all import AgentMessageThreadItem, MessagePhase
+    from openai_codex.models import (
+        ItemCompletedNotification, ThreadTokenUsageUpdatedNotification, TurnCompletedNotification,
+    )
+
+    completed, usage, items = None, None, []
+    with closing(turn.stream()) as events:
+        for event in events:
+            payload = event.payload
+            if isinstance(payload, ItemCompletedNotification) and payload.turn_id == turn.id:
+                items.append(payload.item)
+            elif isinstance(payload, ThreadTokenUsageUpdatedNotification) and payload.turn_id == turn.id:
+                usage = payload.token_usage
+            elif isinstance(payload, TurnCompletedNotification) and payload.turn.id == turn.id:
+                completed = payload.turn
+            on_event(event)
+    if completed is None:
+        raise RuntimeError("turn completed event not received")
+    if completed.status.value == "failed":
+        detail = completed.error.message if completed.error else None
+        raise RuntimeError(detail or f"turn failed with status {completed.status.value}")
+    final, fallback = None, None
+    for item in reversed(items):
+        message = getattr(item, "root", item)
+        if isinstance(message, AgentMessageThreadItem):
+            if message.phase == MessagePhase.final_answer:
+                final = message.text
+                break
+            if message.phase is None and fallback is None:
+                fallback = message.text
+    return TurnResult(
+        id=completed.id, status=completed.status, error=completed.error,
+        started_at=completed.started_at, completed_at=completed.completed_at,
+        duration_ms=completed.duration_ms, final_response=final if final is not None else fallback,
+        items=items, usage=usage,
+    )
 
 
 def _run(command):

@@ -152,7 +152,7 @@ def codex_sdk_llm_client(
     trust a specific executable name or path instead.
     """
     import tempfile
-    from ._codex import find_cli
+    from ._codex import collect_turn, find_cli
 
     try:
         from openai_codex import ApprovalMode, Codex, CodexConfig, CodexError, Sandbox
@@ -183,17 +183,17 @@ def codex_sdk_llm_client(
                                       'web_search="disabled"'),
                 )
                 with Codex(config) as client:
-                    thread = client.thread_start(
+                    turn = client.thread_start(
                         model=model, model_provider="openai", cwd=cwd, ephemeral=True,
                         developer_instructions="",
                         sandbox=Sandbox.read_only, approval_mode=ApprovalMode.deny_all,
-                    )
-                    if on_turn is None:
-                        result = thread.run(prompt)
-                    else:
-                        turn = thread.turn(prompt)
+                    ).turn(prompt)
+                    if on_turn is not None:
                         notify(on_turn, turn)
+                    if on_event is None:
                         result = turn.run()
+                    else:
+                        result = collect_turn(turn, lambda event: notify(on_event, event))
         except CodexError:
             raise
         except (OSError, RuntimeError, UnicodeError) as exc:

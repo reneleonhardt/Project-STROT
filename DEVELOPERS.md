@@ -206,7 +206,7 @@ Call `handle.interrupt()` from `on_turn` to request cancellation. Cancelled turn
 
 | Client | `on_result` | `on_event` | `on_turn` |
 |---|---|---|---|
-| Codex SDK | Native result, usage, duration | Unused | Active turn handle |
+| Codex SDK | Native result, usage, duration | Typed notification | Active turn handle |
 | OpenAI / Anthropic API | Native API response | Unused | Unused |
 | Raw CLIs | Unused | Unused | Unused |
 

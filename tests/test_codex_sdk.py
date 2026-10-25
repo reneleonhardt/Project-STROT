@@ -20,7 +20,7 @@ def sdk(monkeypatch):
     result = SimpleNamespace(status=SimpleNamespace(value="completed"), final_response=VALID_PATHS)
     client = MagicMock()
     client.__enter__.return_value = client
-    client.thread_start.return_value.run.return_value = result
+    client.thread_start.return_value.turn.return_value.run.return_value = result
     factory = Mock(return_value=client)
     monkeypatch.setitem(sys.modules, "openai_codex", SimpleNamespace(
         Codex=factory, CodexConfig=SimpleNamespace, CodexError=CodexError,
@@ -32,7 +32,7 @@ def sdk(monkeypatch):
 @pytest.mark.parametrize("model", [None, "gpt-6-luna"])
 def test_sdk_repairs_and_reuses_cached_code(sdk, monkeypatch, tmp_path, model):
     client, factory, result, _ = sdk
-    client.thread_start.return_value.run.side_effect = [
+    client.thread_start.return_value.turn.return_value.run.side_effect = [
         SimpleNamespace(status=result.status, final_response="not valid code"), result,
     ]
     spec = "codex-sdk" + ("/" + model if model else "")
@@ -50,7 +50,7 @@ def test_sdk_repairs_and_reuses_cached_code(sdk, monkeypatch, tmp_path, model):
         assert call.kwargs == dict(model=model, model_provider="openai", cwd=call.kwargs["cwd"],
                                    ephemeral=True, developer_instructions="",
                                    sandbox="read-only", approval_mode="deny-all")
-    assert "PREVIOUS ATTEMPT" in client.thread_start.return_value.run.call_args.args[0]
+    assert "PREVIOUS ATTEMPT" in client.thread_start.return_value.turn.call_args.args[0]
     monkeypatch.setitem(sys.modules, "openai_codex", None)
     assert strot.run(SAMPLE, "triage", REGISTRY, llm=spec, state=tmp_path, execute=False).cache_hit
 
@@ -119,8 +119,8 @@ def test_runtime_accepts_sdk_configuration(monkeypatch, tmp_path, installed):
     monkeypatch.setattr("openai_codex.client.CodexClient._start_turn",
                         lambda *args, **kwargs: pytest.fail("Model calls are forbidden"))
     # Start the real runtime and thread, but replace generation before any model call.
-    monkeypatch.setattr(sdk.Thread, "run", lambda _, prompt: SimpleNamespace(
-        status=SimpleNamespace(value="completed"), final_response=prompt))
+    monkeypatch.setattr(sdk.Thread, "turn", lambda _, prompt: SimpleNamespace(run=lambda: SimpleNamespace(
+        status=SimpleNamespace(value="completed"), final_response=prompt)))
     assert strot.codex_sdk_llm_client("gpt-6-luna")("compiled code") == "compiled code"
 
 
@@ -142,9 +142,9 @@ def test_sdk_failures_close_resources(sdk, failure):
     elif failure == "thread":
         client.thread_start.side_effect = error("login required")
     elif failure == "run":
-        client.thread_start.return_value.run.side_effect = RuntimeError("turn failed")
+        client.thread_start.return_value.turn.return_value.run.side_effect = RuntimeError("turn failed")
     elif failure == "encoding":
-        client.thread_start.return_value.run.side_effect = UnicodeDecodeError(
+        client.thread_start.return_value.turn.return_value.run.side_effect = UnicodeDecodeError(
             "utf-8", b"\xff", 0, 1, "invalid byte")
     elif failure == "interrupted":
         result.status.value = "interrupted"
@@ -159,7 +159,7 @@ def test_sdk_failures_close_resources(sdk, failure):
 
 
 @pytest.mark.parametrize("entry", ["run", "decide"])
-@pytest.mark.parametrize("stage", ["startup", "thread", "run"])
+@pytest.mark.parametrize("stage", ["startup", "thread", "turn", "run"])
 @pytest.mark.parametrize("error_type,args", [
     ("ServerBusyError", (-32001, "server busy", {"retry_after": 1})),
     ("TransportClosedError", ("connection closed",)),
@@ -171,7 +171,8 @@ def test_sdk_typed_errors_reach_callers_unchanged(monkeypatch, tmp_path, entry, 
     client.__enter__.return_value = client
     factory = Mock(return_value=client)
     target = {"startup": factory, "thread": client.thread_start,
-              "run": client.thread_start.return_value.run}[stage]
+              "turn": client.thread_start.return_value.turn,
+              "run": client.thread_start.return_value.turn.return_value.run}[stage]
     target.side_effect = error
     monkeypatch.setattr(sdk, "Codex", factory)
     llm = strot.codex_sdk_llm_client(cli=sys.executable)
