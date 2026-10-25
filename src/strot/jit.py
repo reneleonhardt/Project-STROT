@@ -43,7 +43,7 @@ from .router import CONFIDENCE_THRESHOLD, DEFAULT_NLU_MODEL
 from .schema import DatasetSchema, introspect_schema
 
 #: ``llm`` parameter: a client callable, or a lazy spec string resolved only
-#: on a cache miss ("openai/gpt-4o", "gpt-4o", "codex-cli", "claude-cli/sonnet").
+#: on a cache miss ("openai/gpt-6-luna", "gpt-6-luna", "codex-cli", "claude-cli/sonnet").
 LLMSpec = Union[str, LLMClient]
 
 _KEY_PREFIX_LEN = 16
@@ -163,7 +163,8 @@ def cache_key(
 
 
 def llm_client(
-    spec: LLMSpec, *, on_result: Optional[LLMHook] = None,
+    spec: LLMSpec, *, reasoning_effort: Optional[str] = None,
+    on_result: Optional[LLMHook] = None,
     on_event: Optional[LLMHook] = None, on_turn: Optional[LLMHook] = None,
 ) -> LLMClient:
     """Create a lazy synthesizer with shared hooks. Custom callables keep their own hooks."""
@@ -173,17 +174,20 @@ def llm_client(
         nonlocal client
         with lock:
             if client is None:
-                client = _resolve_llm(spec, on_result=on_result, on_event=on_event, on_turn=on_turn)
+                client = _resolve_llm(spec, reasoning_effort=reasoning_effort,
+                                      on_result=on_result, on_event=on_event, on_turn=on_turn)
         return client(prompt)
 
     return _call
 
 
-def _resolve_llm(llm: LLMSpec, **hooks: Optional[LLMHook]) -> LLMClient:
+def _resolve_llm(llm: LLMSpec, reasoning_effort: Optional[str] = None, **hooks: Any) -> LLMClient:
     """Resolve a synthesizer spec or return a custom callable."""
     if callable(llm):
         return llm
     if isinstance(llm, str) and llm:
+        if reasoning_effort is not None:
+            hooks["reasoning_effort"] = reasoning_effort
         provider, slash, model = llm.partition("/")
         if provider == "anthropic":
             return anthropic_llm_client(model, **hooks) if model else anthropic_llm_client(**hooks)
@@ -197,7 +201,7 @@ def _resolve_llm(llm: LLMSpec, **hooks: Optional[LLMHook]) -> LLMClient:
         if provider == "codex-sdk":
             return codex_sdk_llm_client(model=model or None, **hooks)
 
-        if not slash:  # bare model name, e.g. "gpt-4o"
+        if not slash:  # bare model name, e.g. "gpt-6-luna"
             return openai_llm_client(llm, **hooks)
     raise RouterConfigurationError(
         f"Cannot resolve llm spec {llm!r}; pass a callable, 'anthropic/<model>', "
@@ -265,7 +269,7 @@ def run(
     data: Any,
     query: str,
     action_registry: Mapping[str, str],
-    llm: LLMSpec = "openai/gpt-4o",
+    llm: LLMSpec = "openai/gpt-6-luna",
     nlu: str = DEFAULT_NLU_MODEL,
     state: Union[str, Path] = ".strot",
     sample_size: int = 25,
@@ -453,7 +457,7 @@ def run(
 def decide(
     data: Any,
     questions: Union[str, Mapping[str, Any]],
-    llm: LLMSpec = "openai/gpt-4o",
+    llm: LLMSpec = "openai/gpt-6-luna",
     nlu: str = DEFAULT_NLU_MODEL,
     state: Union[str, Path] = ".strot",
     sample_size: int = 25,

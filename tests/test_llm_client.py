@@ -6,7 +6,7 @@ import strot
 
 
 @pytest.mark.parametrize("spec,name,model", [
-    ("openai/gpt-4o", "openai", "gpt-4o"), ("gpt-4o", "openai", "gpt-4o"),
+    ("openai/gpt-6-luna", "openai", "gpt-6-luna"), ("gpt-6-luna", "openai", "gpt-6-luna"),
     ("openai", "openai", None), ("anthropic", "anthropic", None),
     ("anthropic/sonnet", "anthropic", "sonnet"),
     ("codex-sdk", "codex_sdk", None), ("codex-sdk/model", "codex_sdk", "model"),
@@ -30,3 +30,12 @@ def test_shared_factory_is_lazy_and_forwards_hooks(monkeypatch, spec, name, mode
 
 def test_shared_factory_preserves_custom_callables():
     assert strot.llm_client(lambda prompt: prompt.upper(), on_event=Mock())("custom") == "CUSTOM"
+
+
+@pytest.mark.parametrize("spec,name", [("openai", "openai"), ("gpt-6-luna", "openai"),
+                                       ("codex-sdk", "codex_sdk"), ("codex-cli", "codex_cli")])
+def test_shared_factory_forwards_effort(monkeypatch, spec, name):
+    factory = Mock(return_value=lambda prompt: prompt)
+    monkeypatch.setattr("strot.jit." + name + "_llm_client", factory)
+    assert strot.llm_client(spec, reasoning_effort="low")("prompt") == "prompt"
+    assert factory.call_args.kwargs["reasoning_effort"] == "low"

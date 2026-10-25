@@ -43,7 +43,8 @@ _CODE_FENCE_RE = re.compile(r"```(?:python)?\s*\n(.*?)```", re.DOTALL)
 
 
 def openai_llm_client(
-    model: str = "gpt-4o", temperature: float = 0.0, *,
+    model: str = "gpt-6-luna", temperature: float = 0.0, *,
+    reasoning_effort: Optional[str] = None,
     on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
     on_turn: Optional[LLMHook] = None,
 ) -> LLMClient:
@@ -56,12 +57,17 @@ def openai_llm_client(
             "pip install strot-ai[hosted]"
         ) from exc
     client = OpenAI()
+    effort = reasoning_effort if reasoning_effort is not None else (
+        "none" if model == "gpt-6-luna" else None)
+    options: Dict[str, Any] = {"temperature": temperature} if effort in (None, "none") else {}
+    if effort is not None:
+        options["extra_body"] = {"reasoning_effort": effort}
 
     def _call(prompt: str) -> str:
         response = client.chat.completions.create(
             model=model,
-            temperature=temperature,
             messages=[{"role": "user", "content": prompt}],
+            **options,
         )
         if on_result is not None:
             on_result(response)
@@ -71,9 +77,10 @@ def openai_llm_client(
 
 
 def anthropic_llm_client(
-    model: str = "claude-opus-4-8",
+    model: str = "claude-haiku-5-5",
     max_tokens: int = 16000,
-    *, on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
+    *, reasoning_effort: Optional[str] = None,
+    on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
     on_turn: Optional[LLMHook] = None,
 ) -> LLMClient:
     """Convenience factory: a synthesizer client backed by the Anthropic API.
@@ -81,6 +88,8 @@ def anthropic_llm_client(
     Requires the ``anthropic`` package (``pip install strot-ai[anthropic]``)
     and ``ANTHROPIC_API_KEY`` in the environment.
     """
+    if reasoning_effort is not None:
+        raise RouterConfigurationError("This Anthropic client does not support reasoning_effort.")
     try:
         from anthropic import Anthropic
     except ImportError as exc:
@@ -113,7 +122,8 @@ def claude_cli_llm_client(
     model: Optional[str] = None,
     cli: str = "claude",
     timeout: float = 600.0,
-    *, on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
+    *, reasoning_effort: Optional[str] = None,
+    on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
     on_turn: Optional[LLMHook] = None,
 ) -> LLMClient:
     """Use Claude Code for synthesis.
@@ -122,6 +132,8 @@ def claude_cli_llm_client(
     keeps CLI authentication. Built-in tools and session persistence are
     disabled. No SDK is required.
     """
+    if reasoning_effort is not None:
+        raise RouterConfigurationError("This Claude CLI client does not support reasoning_effort.")
     return _cli_llm_client("claude", cli, model, timeout)
 
 
@@ -129,7 +141,8 @@ def codex_cli_llm_client(
     model: Optional[str] = None,
     cli: str = "codex",
     timeout: float = 600.0,
-    *, on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
+    *, reasoning_effort: Optional[str] = None,
+    on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
     on_turn: Optional[LLMHook] = None,
 ) -> LLMClient:
     """Use ``codex exec`` for synthesis.
@@ -138,11 +151,12 @@ def codex_cli_llm_client(
     ``--ignore-user-config`` and ``--ephemeral``. No SDK is required.
     Shell commands, web search, and project instructions are disabled.
     """
-    return _cli_llm_client("codex", cli, model, timeout)
+    return _cli_llm_client("codex", cli, model, timeout, reasoning_effort)
 
 
 def codex_sdk_llm_client(
     model: Optional[str] = None, cli: Optional[str] = None, *,
+    reasoning_effort: Optional[str] = None,
     on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
     on_turn: Optional[LLMHook] = None,
 ) -> LLMClient:
@@ -163,6 +177,8 @@ def codex_sdk_llm_client(
         ) from exc
 
     cli_path = find_cli(cli) if cli is not None else None
+    effort = reasoning_effort if reasoning_effort is not None else (
+        "none" if model == "gpt-6-luna" else None)
 
     def _call(prompt: str) -> str:
         hook_error = None
@@ -187,7 +203,7 @@ def codex_sdk_llm_client(
                         model=model, model_provider="openai", cwd=cwd, ephemeral=True,
                         developer_instructions="",
                         sandbox=Sandbox.read_only, approval_mode=ApprovalMode.deny_all,
-                    ).turn(prompt)
+                    ).turn(prompt, **({"effort": effort} if effort is not None else {}))
                     if on_turn is not None:
                         notify(on_turn, turn)
                     if on_event is None:
@@ -213,7 +229,10 @@ def codex_sdk_llm_client(
     return _call
 
 
-def _cli_llm_client(backend: str, cli: str, model: Optional[str], timeout: float) -> LLMClient:
+def _cli_llm_client(
+    backend: str, cli: str, model: Optional[str], timeout: float,
+    reasoning_effort: Optional[str] = None,
+) -> LLMClient:
     import shutil
     import subprocess
     import tempfile
@@ -224,6 +243,8 @@ def _cli_llm_client(backend: str, cli: str, model: Optional[str], timeout: float
             f"Cannot find the {cli!r} CLI on PATH. Install {backend} and sign in."
         )
     cli_path = str(Path(cli_path).absolute())
+    effort = reasoning_effort if reasoning_effort is not None else (
+        "none" if model == "gpt-6-luna" else None)
 
     def _call(prompt: str) -> str:
         # Use stdin for context and skip project instructions.
@@ -242,6 +263,8 @@ def _cli_llm_client(backend: str, cli: str, model: Optional[str], timeout: float
                     cli_path, "--safe-mode", "-p", "--output-format", "text", "--tools", "",
                     "--no-session-persistence",
                 ]
+            if backend == "codex" and effort is not None:
+                command += ["-c", "model_reasoning_effort=" + json.dumps(effort)]
             if model:
                 command += ["--model", model]
             try:

@@ -51,6 +51,7 @@ def test_sdk_repairs_and_reuses_cached_code(sdk, monkeypatch, tmp_path, model):
                                    ephemeral=True, developer_instructions="",
                                    sandbox="read-only", approval_mode="deny-all")
     assert "PREVIOUS ATTEMPT" in client.thread_start.return_value.turn.call_args.args[0]
+    assert client.thread_start.return_value.turn.call_args.kwargs == ({"effort": "none"} if model else {})
     monkeypatch.setitem(sys.modules, "openai_codex", None)
     assert strot.run(SAMPLE, "triage", REGISTRY, llm=spec, state=tmp_path, execute=False).cache_hit
 
@@ -59,6 +60,12 @@ def test_missing_sdk_names_the_extra(monkeypatch):
     monkeypatch.setitem(sys.modules, "openai_codex", None)
     with pytest.raises(RouterConfigurationError, match=r"strot-ai\[codex-sdk\]"):
         strot.codex_sdk_llm_client()
+
+
+@pytest.mark.parametrize("effort", [None, "none", "low", "medium"])
+def test_sdk_effort_reaches_the_turn(sdk, effort):
+    assert strot.codex_sdk_llm_client("gpt-6-luna", reasoning_effort=effort)("prompt") == VALID_PATHS
+    sdk[0].thread_start.return_value.turn.assert_called_once_with("prompt", effort=effort or "none")
 
 
 def test_result_hook_preserves_metadata_and_callback_errors(sdk):
@@ -119,7 +126,7 @@ def test_runtime_accepts_sdk_configuration(monkeypatch, tmp_path, installed):
     monkeypatch.setattr("openai_codex.client.CodexClient._start_turn",
                         lambda *args, **kwargs: pytest.fail("Model calls are forbidden"))
     # Start the real runtime and thread, but replace generation before any model call.
-    monkeypatch.setattr(sdk.Thread, "turn", lambda _, prompt: SimpleNamespace(run=lambda: SimpleNamespace(
+    monkeypatch.setattr(sdk.Thread, "turn", lambda _, prompt, **kwargs: SimpleNamespace(run=lambda: SimpleNamespace(
         status=SimpleNamespace(value="completed"), final_response=prompt)))
     assert strot.codex_sdk_llm_client("gpt-6-luna")("compiled code") == "compiled code"
 

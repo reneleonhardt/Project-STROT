@@ -356,7 +356,7 @@ class TestRun:
     def test_lazy_string_spec_not_resolved_on_hit(self, tmp_path, fake_runtime):
         strot.run(SAMPLE, QUERY, REGISTRY, llm=ScriptedLLM([VALID_PATHS]), state=tmp_path)
         # openai is not installed here: resolving this spec would raise.
-        result = strot.run(SAMPLE, QUERY, REGISTRY, llm="openai/gpt-4o", state=tmp_path)
+        result = strot.run(SAMPLE, QUERY, REGISTRY, llm="openai/gpt-6-luna", state=tmp_path)
         assert result.cache_hit is True
 
     def test_schema_drift_triggers_one_recompile(self, tmp_path, fake_runtime):
@@ -440,7 +440,7 @@ class TestRun:
         if importlib.util.find_spec("anthropic") is not None:
             pytest.skip("anthropic installed; factory would construct a real client")
         with pytest.raises(RouterConfigurationError, match="anthropic"):
-            strot.run(SAMPLE, QUERY, REGISTRY, llm="anthropic/claude-opus-4-8", state=tmp_path)
+            strot.run(SAMPLE, QUERY, REGISTRY, llm="anthropic/claude-haiku-5-5", state=tmp_path)
 
 
 class TestCalibration:
