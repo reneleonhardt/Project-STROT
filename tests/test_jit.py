@@ -236,6 +236,12 @@ class TestCacheKey:
 
 
 class TestRun:
+    def test_configured_client_is_lazy_on_cache_hit(self, monkeypatch, tmp_path):
+        strot.run(SAMPLE, QUERY, REGISTRY, llm=ScriptedLLM([VALID_PATHS]), state=tmp_path, execute=False)
+        monkeypatch.setattr("strot.jit._resolve_llm", lambda *a, **k: pytest.fail("Client resolved"))
+        client = strot.llm_client("codex-sdk", on_result=lambda _: pytest.fail("Hook called"))
+        assert strot.run(SAMPLE, QUERY, REGISTRY, llm=client, state=tmp_path, execute=False).cache_hit
+
     @pytest.mark.parametrize("alias", [False, True])
     def test_cache_refreshes_replaced_source_through_path_alias(self, tmp_path, alias):
         import os

@@ -200,6 +200,8 @@ For SDK calls, STROT selects the newest verified CLI from `PATH`, standard locat
 
 Each Codex SDK synthesis call starts and closes its runtime. `openai_codex.CodexError` exceptions pass through unchanged. Empty or incomplete replies raise `CompilationError`.
 
+`strot.llm_client(spec, **hooks)` accepts the same specs as `llm=`. It creates and reuses a client on first use. Custom callables keep their own callbacks.
+
 All factories accept the callbacks below. Client calls return text. Unsupported callbacks are ignored. Callbacks run on the caller's thread and must return promptly. Errors pass through unchanged. Result fields vary by provider.
 
 Call `handle.interrupt()` from `on_turn` to request cancellation. Cancelled turns raise `CompilationError` without a compiler retry.
@@ -209,6 +211,13 @@ Call `handle.interrupt()` from `on_turn` to request cancellation. Cancelled turn
 | Codex SDK | Native result, usage, duration | Typed notification | Active turn handle |
 | OpenAI / Anthropic API | Native API response | Unused | Unused |
 | Raw CLIs | Unused | Unused | Unused |
+
+```python
+llm = strot.llm_client("codex-sdk/gpt-6-luna", on_result=lambda result: print(result.usage))
+result = strot.run(records, query=goal, action_registry=actions, llm=llm)
+```
+
+Changing `llm` does not clear cached artifacts. Use a fresh `state` directory to compare compiles.
 
 Both CLIs run in an isolated temporary directory and keep CLI authentication.
 Codex skips user configuration and disables project instructions, shell commands,

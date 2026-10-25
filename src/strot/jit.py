@@ -30,6 +30,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Sequence, Union
 from .compiler import (
     CompiledAsset,
     LLMClient,
+    LLMHook,
     StrotCompiler,
     anthropic_llm_client,
     claude_cli_llm_client,
@@ -161,25 +162,43 @@ def cache_key(
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def _resolve_llm(llm: LLMSpec) -> LLMClient:
-    """Resolve the synthesizer client. Called ONLY on a cache miss, so a warm
-    production box never needs the LLM dependency or its API key."""
+def llm_client(
+    spec: LLMSpec, *, on_result: Optional[LLMHook] = None,
+    on_event: Optional[LLMHook] = None, on_turn: Optional[LLMHook] = None,
+) -> LLMClient:
+    """Create a lazy synthesizer with shared hooks. Custom callables keep their own hooks."""
+    client, lock = None, RLock()
+
+    def _call(prompt: str) -> str:
+        nonlocal client
+        with lock:
+            if client is None:
+                client = _resolve_llm(spec, on_result=on_result, on_event=on_event, on_turn=on_turn)
+        return client(prompt)
+
+    return _call
+
+
+def _resolve_llm(llm: LLMSpec, **hooks: Optional[LLMHook]) -> LLMClient:
+    """Resolve a synthesizer spec or return a custom callable."""
     if callable(llm):
         return llm
     if isinstance(llm, str) and llm:
         provider, slash, model = llm.partition("/")
-        if provider in ("claude-cli", "claude-code"):
-            return claude_cli_llm_client(model=model or None)
-        if provider == "codex-cli":
-            return codex_cli_llm_client(model=model or None)
-        if provider == "codex-sdk":
-            return codex_sdk_llm_client(model=model or None)
         if provider == "anthropic":
-            return anthropic_llm_client(model) if model else anthropic_llm_client()
+            return anthropic_llm_client(model, **hooks) if model else anthropic_llm_client(**hooks)
+        if provider in ("claude-cli", "claude-code"):
+            return claude_cli_llm_client(model=model or None, **hooks)
+
         if provider == "openai":
-            return openai_llm_client(model)
+            return openai_llm_client(model, **hooks) if model else openai_llm_client(**hooks)
+        if provider == "codex-cli":
+            return codex_cli_llm_client(model=model or None, **hooks)
+        if provider == "codex-sdk":
+            return codex_sdk_llm_client(model=model or None, **hooks)
+
         if not slash:  # bare model name, e.g. "gpt-4o"
-            return openai_llm_client(llm)
+            return openai_llm_client(llm, **hooks)
     raise RouterConfigurationError(
         f"Cannot resolve llm spec {llm!r}; pass a callable, 'anthropic/<model>', "
         "'openai/<model>', a bare OpenAI model name, 'codex-cli[/<model>]', "
