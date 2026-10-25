@@ -1,5 +1,6 @@
 import sys
 from pathlib import Path
+from threading import Event
 from types import SimpleNamespace
 from unittest.mock import MagicMock, Mock
 
@@ -62,6 +63,51 @@ def test_missing_sdk_names_the_extra(monkeypatch):
         strot.codex_sdk_llm_client()
 
 
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf"), 1e100])
+def test_sdk_rejects_invalid_timeout(sdk, timeout):
+    with pytest.raises(ValueError, match="positive finite"):
+        strot.codex_sdk_llm_client(timeout=timeout)
+    sdk[1].assert_not_called()
+
+
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("failure", [False, True])
+def test_sdk_timeout_closes_runtime_without_result_callback(sdk, monkeypatch, streaming, failure):
+    client, _, result, error = sdk
+    closed, results = Event(), []
+    client.close.side_effect = closed.set
+
+    def wait(*args):
+        assert closed.wait(2), "runtime did not close"
+        if failure:
+            raise error("transport closed")
+        return result
+
+    client.thread_start.return_value.turn.return_value.run.side_effect = wait
+    monkeypatch.setattr("strot._codex.collect_turn", wait)
+    llm = strot.codex_sdk_llm_client(
+        timeout=0.01, on_event=(lambda event: None) if streaming else None, on_result=results.append)
+    with pytest.raises(CompilationError, match="timed out") as caught:
+        llm("compile")
+    assert caught.value.attempts == 0 and not results
+    client.close.assert_called_once()
+    client.__exit__.assert_called_once()
+
+
+def test_timeout_keeps_callback_errors(sdk, monkeypatch):
+    client = sdk[0]
+    closed = Event()
+    client.close.side_effect = closed.set
+    error = RuntimeError("observer failed")
+    def callback(event):
+        assert closed.wait(2)
+        raise error
+    monkeypatch.setattr("strot._codex.collect_turn", lambda turn, hook: hook(None))
+    with pytest.raises(RuntimeError) as caught:
+        strot.codex_sdk_llm_client(timeout=0.01, on_event=callback)("compile")
+    assert caught.value is error
+
+
 @pytest.mark.parametrize("effort", [None, "none", "low", "medium"])
 def test_sdk_effort_reaches_the_turn(sdk, effort):
     assert strot.codex_sdk_llm_client("gpt-6-luna", reasoning_effort=effort)("prompt") == VALID_PATHS
@@ -107,9 +153,10 @@ def test_turn_hook_error_is_not_wrapped(sdk):
 
 
 @pytest.mark.parametrize("installed", [False, True])
-def test_runtime_accepts_sdk_configuration(monkeypatch, tmp_path, installed):
+@pytest.mark.parametrize("expires", [False, True])
+def test_runtime_accepts_sdk_configuration(monkeypatch, tmp_path, installed, expires):
     sdk = pytest.importorskip("openai_codex")
-    from codex_cli_bin import bundled_codex_path
+    bundled_codex_path = pytest.importorskip("codex_cli_bin").bundled_codex_path
 
     codex_bin = str(bundled_codex_path()) if installed else None
     monkeypatch.setattr("strot._codex.find_cli", lambda cli=None: codex_bin)
@@ -125,10 +172,28 @@ def test_runtime_accepts_sdk_configuration(monkeypatch, tmp_path, installed):
     monkeypatch.setattr(sdk, "CodexConfig", isolated_config)
     monkeypatch.setattr("openai_codex.client.CodexClient._start_turn",
                         lambda *args, **kwargs: pytest.fail("Model calls are forbidden"))
+    processes = []
+    codex_type = sdk.Codex
+    def tracked_client(config):
+        client = codex_type(config)
+        processes.append(client._client._proc)
+        return client
+    monkeypatch.setattr(sdk, "Codex", tracked_client)
     # Start the real runtime and thread, but replace generation before any model call.
-    monkeypatch.setattr(sdk.Thread, "turn", lambda _, prompt, **kwargs: SimpleNamespace(run=lambda: SimpleNamespace(
-        status=SimpleNamespace(value="completed"), final_response=prompt)))
-    assert strot.codex_sdk_llm_client("gpt-6-luna")("compiled code") == "compiled code"
+    def turn(_, prompt, **kwargs):
+        def run():
+            if expires:
+                processes[-1].wait(timeout=5)
+            return SimpleNamespace(status=SimpleNamespace(value="completed"), final_response=prompt)
+        return SimpleNamespace(run=run)
+    monkeypatch.setattr(sdk.Thread, "turn", turn)
+    llm = strot.codex_sdk_llm_client("gpt-6-luna", timeout=0.05 if expires else 600)
+    if expires:
+        with pytest.raises(CompilationError, match="timed out"):
+            llm("compiled code")
+    else:
+        assert llm("compiled code") == "compiled code"
+    assert processes[0].poll() is not None
 
 
 def test_explicit_relative_cli_survives_directory_change(sdk, monkeypatch, tmp_path):

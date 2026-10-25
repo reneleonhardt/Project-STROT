@@ -208,7 +208,9 @@ Hosted Luna routing defaults to `low`. For OpenAI routing, pass `reasoning_effor
 
 All factories accept the callbacks below. Client calls return text. Unsupported callbacks are ignored. Callbacks run on the caller's thread and must return promptly. Errors pass through unchanged. Result fields vary by provider.
 
-Call `handle.interrupt()` from `on_turn` to request cancellation. Cancelled turns raise `CompilationError` without a compiler retry.
+Call `handle.interrupt()` from `on_turn` to request cancellation. Cancelled turns and expired response waits raise `CompilationError` without a compiler retry.
+
+SDK response waits default to 600 seconds. Set `timeout=60` on `strot.codex_sdk_llm_client` to change the limit. Expiry closes the runtime. Startup, callbacks, and cleanup can outlast the limit.
 
 | Client | `on_result` | `on_event` | `on_turn` |
 |---|---|---|---|

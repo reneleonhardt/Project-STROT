@@ -155,7 +155,7 @@ def codex_cli_llm_client(
 
 
 def codex_sdk_llm_client(
-    model: Optional[str] = None, cli: Optional[str] = None, *,
+    model: Optional[str] = None, cli: Optional[str] = None, timeout: float = 600.0, *,
     reasoning_effort: Optional[str] = None,
     on_result: Optional[LLMHook] = None, on_event: Optional[LLMHook] = None,
     on_turn: Optional[LLMHook] = None,
@@ -164,9 +164,15 @@ def codex_sdk_llm_client(
 
     Automatic selection checks publisher identity and version. Set ``cli`` to
     trust a specific executable name or path instead.
+    ``timeout`` bounds response waiting after turn startup. Expiry closes the
+    runtime. Startup and user callbacks must return on their own.
     """
     import tempfile
+    from threading import TIMEOUT_MAX, Event, Timer
     from ._codex import collect_turn, find_cli
+
+    if not 0 < timeout <= TIMEOUT_MAX:
+        raise ValueError("timeout must be a positive finite number of seconds within the platform's timer limit")
 
     try:
         from openai_codex import ApprovalMode, Codex, CodexConfig, CodexError, Sandbox
@@ -182,6 +188,7 @@ def codex_sdk_llm_client(
 
     def _call(prompt: str) -> str:
         hook_error = None
+        expired = Event()
 
         def notify(hook: LLMHook, value: Any) -> None:
             nonlocal hook_error
@@ -206,16 +213,37 @@ def codex_sdk_llm_client(
                     ).turn(prompt, **({"effort": effort} if effort is not None else {}))
                     if on_turn is not None:
                         notify(on_turn, turn)
-                    if on_event is None:
-                        result = turn.run()
-                    else:
-                        result = collect_turn(turn, lambda event: notify(on_event, event))
-        except CodexError:
-            raise
-        except (OSError, RuntimeError, UnicodeError) as exc:
+
+                    def expire() -> None:
+                        expired.set()
+                        client.close()
+
+                    timer = Timer(timeout, expire)
+                    timer.daemon = True
+                    timer.start()
+                    try:
+                        if on_event is None:
+                            result = turn.run()
+                        else:
+                            result = collect_turn(turn, lambda event: notify(on_event, event))
+                    finally:
+                        timer.cancel()
+                        timer.join()
+                    if expired.is_set():
+                        raise TimeoutError(f"response wait exceeded {timeout:g} seconds")
+        except Exception as exc:
             if exc is hook_error:
                 raise
-            raise CompilationError(f"Codex SDK synthesizer failed: {exc}", attempts=0) from exc
+            if expired.is_set():
+                raise CompilationError(
+                    f"Codex SDK synthesizer timed out after {timeout:g} seconds of response waiting.",
+                    attempts=0,
+                ) from exc
+            if isinstance(exc, CodexError):
+                raise
+            if isinstance(exc, (OSError, RuntimeError, UnicodeError)):
+                raise CompilationError(f"Codex SDK synthesizer failed: {exc}", attempts=0) from exc
+            raise
         if on_result is not None:
             on_result(result)
         if result.status.value != "completed":
